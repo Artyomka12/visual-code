@@ -3,7 +3,8 @@ sys.path.insert(0, '.')
 from http.server import HTTPServer
 from main import Handler
 
-server = HTTPServer(('127.0.0.1', 5000), Handler)
+server = HTTPServer(('127.0.0.1', 0), Handler)  # port=0: OS assigns a free port
+port = server.server_address[1]
 t = threading.Thread(target=server.serve_forever, daemon=True)
 t.start()
 time.sleep(0.3)
@@ -11,7 +12,7 @@ time.sleep(0.3)
 def raw_req(method, path, body=None):
     s = socket.socket()
     s.settimeout(5)
-    s.connect(('127.0.0.1', 5000))
+    s.connect(('127.0.0.1', port))
     if body:
         b = json.dumps(body).encode()
         headers = f'{method} {path} HTTP/1.0\r\nHost:127.0.0.1\r\nContent-Type:application/json\r\nContent-Length:{len(b)}\r\n\r\n'

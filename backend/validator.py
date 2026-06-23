@@ -21,7 +21,7 @@ ALLOWED_NODE_TYPES = {
 
 ALLOWED_BUILTIN_CALLS = {
     'print', 'range', 'len', 'int', 'float', 'str', 'bool',
-    'abs', 'min', 'max', 'sum', 'round',
+    'abs', 'min', 'max', 'sum', 'round', 'bin',
     'sorted', 'reversed', 'list', 'tuple', 'dict', 'set',
     'enumerate', 'zip', 'type',
 }
@@ -63,6 +63,8 @@ def validate(code: str) -> tuple[bool, str]:
     except SyntaxError as e:
         return False, f'Синтаксическая ошибка в строке {e.lineno}: {e.msg}'
 
+    user_functions = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+
     for node in ast.walk(tree):
         node_type = type(node)
 
@@ -74,7 +76,7 @@ def validate(code: str) -> tuple[bool, str]:
 
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name):
-                if node.func.id not in ALLOWED_BUILTIN_CALLS:
+                if node.func.id not in ALLOWED_BUILTIN_CALLS and node.func.id not in user_functions:
                     return False, f"Функция '{node.func.id}' не разрешена"
             elif isinstance(node.func, ast.Attribute):
                 if node.func.attr not in ALLOWED_METHODS:

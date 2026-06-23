@@ -103,6 +103,55 @@ function setActiveLine(lineNum) {
   return target;
 }
 
+/* ===== Example codes ===== */
+const EXAMPLES = {
+  factorial: `def factorial(n):
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+print(factorial(5))`,
+
+  fibonacci: `def fib(n):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+print(fib(6))`,
+
+  bubble: `def bubble_sort(arr):
+    n = len(arr)
+    for i in range(n):
+        for j in range(n - i - 1):
+            if arr[j] > arr[j + 1]:
+                arr[j], arr[j + 1] = arr[j + 1], arr[j]
+    return arr
+
+result = bubble_sort([5, 3, 8, 1, 9, 2])
+print(result)`,
+
+  digits: `n = 123456
+digit_sum = 0
+count = 0
+while n > 0:
+    digit = n % 10
+    digit_sum += digit
+    count += 1
+    n = n // 10
+
+print(digit_sum)
+print(count)`,
+};
+
+document.getElementById('example-select').addEventListener('change', function () {
+  const code = EXAMPLES[this.value];
+  if (code) {
+    editor.setValue(code);
+    editor.setCursor({ line: 0, ch: 0 });
+  }
+  this.value = '';
+});
+
 /* ===== Run button & view switching ===== */
 const runBtn     = document.getElementById('run-btn');
 const backBtn    = document.getElementById('back-btn');
@@ -138,7 +187,16 @@ runBtn.addEventListener('click', async () => {
 
     // Build visualization
     buildCodeDisplay(code);
-    truncWarn.classList.toggle('hidden', !result.truncated);
+    if (result.truncated) {
+      truncWarn.textContent = '⚠ Код содержит более 300 шагов — показаны первые 300';
+      truncWarn.classList.remove('hidden');
+    } else if (result.error) {
+      const lineInfo = result.error.line ? ` (строка ${result.error.line})` : '';
+      truncWarn.textContent = `⚠ Ошибка выполнения${lineInfo}: ${result.error.message}`;
+      truncWarn.classList.remove('hidden');
+    } else {
+      truncWarn.classList.add('hidden');
+    }
 
     // Switch view
     inputView.classList.remove('active');
@@ -179,3 +237,20 @@ function detectTitle(code) {
   if (/\bdef\b/.test(code))   return 'Функции';
   return 'Визуализация кода';
 }
+
+/* ===== Theme toggle ===== */
+const themeToggle = document.getElementById('theme-toggle');
+
+function applyTheme(dark) {
+  document.documentElement.classList.toggle('dark', dark);
+  themeToggle.textContent = dark ? '☀️' : '🌙';
+}
+
+// Restore saved preference
+applyTheme(localStorage.getItem('theme') === 'dark');
+
+themeToggle.addEventListener('click', () => {
+  const isDark = document.documentElement.classList.contains('dark');
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+  applyTheme(!isDark);
+});

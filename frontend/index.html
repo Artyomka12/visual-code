@@ -20,6 +20,7 @@
       </div>
       <nav class="header-nav">
         <span class="nav-label">Визуализатор Python</span>
+        <button id="theme-toggle" class="theme-toggle" title="Сменить тему">🌙</button>
       </nav>
     </div>
   </header>
@@ -39,6 +40,13 @@
         <div class="card editor-card">
           <div class="card-header">
             <span class="card-title">Код</span>
+            <select id="example-select" class="example-select">
+              <option value="">Выбрать пример</option>
+              <option value="factorial">Факториал</option>
+              <option value="fibonacci">Числа Фибоначчи</option>
+              <option value="bubble">Пузырьковая сортировка</option>
+              <option value="digits">Цифры числа</option>
+            </select>
             <div class="lang-badge">Python</div>
           </div>
           <div id="editor-wrapper">
@@ -114,8 +122,9 @@
         ⚠ Код содержит более 300 шагов — показаны первые 300
       </div>
 
-      <div class="viz-layout">
-        <!-- Left: code panel -->
+      <!-- Top row: code + sidebar -->
+      <div class="viz-top">
+        <!-- Code panel -->
         <div class="card code-panel">
           <div class="card-header">
             <span class="card-title">Код</span>
@@ -124,15 +133,29 @@
           <div id="code-display"></div>
         </div>
 
-        <!-- Right: memory + console -->
-        <div class="viz-right">
-          <div class="card memory-panel" id="memory-panel">
+        <!-- Right sidebar: controls + console -->
+        <div class="viz-sidebar">
+          <div class="card controls-card">
             <div class="card-header">
-              <span class="card-title">Memory</span>
-              <span class="panel-hint">переменные</span>
+              <span class="card-title">Управление</span>
             </div>
-            <div class="panel-body" id="memory-body">
-              <span class="empty-hint">Переменных пока нет</span>
+            <div class="controls-body">
+              <div class="speed-control">
+                <label>Скорость</label>
+                <select id="speed-select">
+                  <option value="800">Медленно</option>
+                  <option value="300" selected>Нормально</option>
+                  <option value="50">Быстро</option>
+                  <option value="0">Очень быстро</option>
+                </select>
+              </div>
+              <div class="ctrl-buttons">
+                <button id="ctrl-first" class="ctrl-btn" title="В начало">⏮</button>
+                <button id="ctrl-prev"  class="ctrl-btn" title="Назад (←)">◀</button>
+                <button id="ctrl-play"  class="ctrl-btn ctrl-play" title="Играть / Пауза">▶</button>
+                <button id="ctrl-next"  class="ctrl-btn" title="Вперёд (→)">▶▶</button>
+                <button id="ctrl-last"  class="ctrl-btn" title="В конец">⏭</button>
+              </div>
             </div>
           </div>
 
@@ -149,22 +172,9 @@
         </div>
       </div>
 
-      <!-- Controls -->
-      <div class="controls">
-        <button id="ctrl-first" class="ctrl-btn" title="В начало">⏮</button>
-        <button id="ctrl-prev"  class="ctrl-btn" title="Назад (←)">◀</button>
-        <button id="ctrl-play"  class="ctrl-btn ctrl-play" title="Играть / Пауза">▶</button>
-        <button id="ctrl-next"  class="ctrl-btn" title="Вперёд (→)">▶▶</button>
-        <button id="ctrl-last"  class="ctrl-btn" title="В конец">⏭</button>
-        <div class="speed-control">
-          <label>Скорость</label>
-          <select id="speed-select">
-            <option value="800">Медленно</option>
-            <option value="300" selected>Нормально</option>
-            <option value="50">Быстро</option>
-            <option value="0">Очень быстро</option>
-          </select>
-        </div>
+      <!-- Scope canvas: full width below code -->
+      <div id="scope-canvas">
+        <svg id="scope-arrows" aria-hidden="true"></svg>
       </div>
     </section>
 

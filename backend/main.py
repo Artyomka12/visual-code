@@ -107,7 +107,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    port = 8080
+    port = 5000
     server = HTTPServer(('', port), Handler)
     print(f'')
     print(f'  Сервер запущен: http://localhost:{port}')

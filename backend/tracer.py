@@ -16,6 +16,7 @@ SAFE_BUILTINS = {
     'max': max,
     'sum': sum,
     'round': round,
+    'bin': bin,
     'sorted': sorted,
     'reversed': reversed,
     'list': list,
@@ -54,10 +55,11 @@ def _serialize(value, depth=0):
 
 def trace_code(code: str) -> dict:
     steps = []
-    output_lines = []
     error_info = None
 
-    initial_namespace_keys = set(SAFE_BUILTINS.keys()) | {'__builtins__', '__name__', '__doc__', '__package__', '__loader__', '__spec__'}
+    initial_namespace_keys = set(SAFE_BUILTINS.keys()) | {
+        '__builtins__', '__name__', '__doc__', '__package__', '__loader__', '__spec__'
+    }
 
     captured_output = []
 
@@ -70,37 +72,106 @@ def trace_code(code: str) -> dict:
     namespace['__builtins__'] = {}
 
     def make_tracer():
-        step_count = [0]
-        limit_hit = [False]
+        step_count    = [0]
+        limit_hit     = [False]
+        scope_counter = [0]
+        # Each entry: (scope_id, func_name, depth, call_step_index)
+        scope_stack   = []
 
-        def tracer(frame, event, arg):
-            if frame.f_code.co_filename != 'user_code':
-                return None
-
-            if event != 'line':
-                return tracer
-
-            if step_count[0] >= MAX_STEPS:
-                if not limit_hit[0]:
-                    limit_hit[0] = True
-                return tracer
-
-            step_count[0] += 1
-
+        def collect_locals(frame):
             local_vars = {}
             for k, v in frame.f_locals.items():
-                if k in initial_namespace_keys or k.startswith('_'):
+                if k in initial_namespace_keys or k.startswith('_') or callable(v):
                     continue
                 try:
                     local_vars[k] = _serialize(v)
                 except Exception:
                     local_vars[k] = '<не отображается>'
+            return local_vars
 
-            steps.append({
-                'line': frame.f_lineno,
-                'variables': copy.deepcopy(local_vars),
-                'output': list(captured_output),
-            })
+        def tracer(frame, event, arg):
+            if frame.f_code.co_filename != 'user_code':
+                return None
+
+            # Module-level call/return are not user function calls — skip recording them
+            if frame.f_code.co_name == '<module>' and event in ('call', 'return'):
+                return tracer
+
+            if event == 'call':
+                scope_counter[0] += 1
+                sid   = scope_counter[0]
+                # parent = innermost scope on stack, or 0 (global) if stack empty
+                pid   = scope_stack[-1][0] if scope_stack else 0
+                depth = len(scope_stack)       # depth 0 = called from global
+                name  = frame.f_code.co_name
+                scope_stack.append((sid, name, depth, len(steps)))
+
+                # Record call step — args collected on first line event inside function
+                steps.append({
+                    'event':      'call',
+                    'scope_id':   sid,
+                    'parent_id':  pid,
+                    'scope_name': name,
+                    'args':       {},           # populated on first line inside
+                    'depth':      depth,
+                    'line':       frame.f_lineno,
+                    'variables':  {},
+                    'output':     list(captured_output),
+                })
+                return tracer
+
+            if event == 'return':
+                ret_val = None
+                try:
+                    ret_val = _serialize(arg)
+                except Exception:
+                    ret_val = '<не отображается>'
+
+                if scope_stack:
+                    sid, name, depth, _ = scope_stack.pop()
+                else:
+                    sid, name, depth = 0, '<module>', 0
+
+                steps.append({
+                    'event':        'return',
+                    'scope_id':     sid,
+                    'scope_name':   name,
+                    'return_value': ret_val,
+                    'depth':        depth,
+                    'line':         frame.f_lineno,
+                    'variables':    collect_locals(frame),
+                    'output':       list(captured_output),
+                })
+                return tracer
+
+            if event == 'line':
+                if step_count[0] >= MAX_STEPS:
+                    limit_hit[0] = True
+                    return tracer
+
+                step_count[0] += 1
+                sid   = scope_stack[-1][0] if scope_stack else 0
+                name  = scope_stack[-1][1] if scope_stack else '<module>'
+                depth = scope_stack[-1][2] if scope_stack else 0
+
+                local_vars = collect_locals(frame)
+
+                # Back-fill args into the preceding call step on first line of a function
+                if scope_stack:
+                    call_idx = scope_stack[-1][3]
+                    if call_idx < len(steps) and not steps[call_idx]['args']:
+                        steps[call_idx]['args']      = copy.deepcopy(local_vars)
+                        steps[call_idx]['variables'] = copy.deepcopy(local_vars)
+
+                steps.append({
+                    'event':      'line',
+                    'scope_id':   sid,
+                    'scope_name': name,
+                    'depth':      depth,
+                    'line':       frame.f_lineno,
+                    'variables':  copy.deepcopy(local_vars),
+                    'output':     list(captured_output),
+                })
 
             return tracer
 
@@ -121,10 +192,10 @@ def trace_code(code: str) -> dict:
     finally:
         sys.settrace(None)
 
-    # Collect final variable state from namespace after execution
+    # Final global variable state
     final_vars = {}
     for k, v in namespace.items():
-        if k in initial_namespace_keys or k.startswith('_'):
+        if k in initial_namespace_keys or k.startswith('_') or callable(v):
             continue
         try:
             final_vars[k] = _serialize(v)
@@ -133,22 +204,28 @@ def trace_code(code: str) -> dict:
 
     final_output = list(captured_output)
 
-    # Add synthetic final step if output or variables differ from last recorded step
+    # Synthetic final step (global scope)
     if error_info is None and not limit_hit[0]:
-        last = steps[-1] if steps else None
-        if last is None or last['output'] != final_output or last['variables'] != final_vars:
-            last_line = last['line'] if last else 1
+        last_line = next(
+            (s for s in reversed(steps) if s.get('event', 'line') == 'line'),
+            None
+        )
+        if last_line is None or last_line['output'] != final_output or last_line['variables'] != final_vars:
+            last_lineno = last_line['line'] if last_line else 1
             steps.append({
-                'line': last_line,
-                'variables': copy.deepcopy(final_vars),
-                'output': final_output,
-                'final': True,
+                'event':      'line',
+                'scope_id':   0,
+                'scope_name': '<module>',
+                'depth':      0,
+                'line':       last_lineno,
+                'variables':  copy.deepcopy(final_vars),
+                'output':     final_output,
+                'final':      True,
             })
 
-    result = {
-        'steps': steps,
-        'error': error_info,
-        'truncated': limit_hit[0],
+    return {
+        'steps':       steps,
+        'error':       error_info,
+        'truncated':   limit_hit[0],
         'total_lines': len(code.splitlines()),
     }
-    return result

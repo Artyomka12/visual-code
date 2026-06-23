@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:8080';
+const API_BASE = 'http://localhost:5000';
 
 async function traceCode(code) {
   const resp = await fetch(`${API_BASE}/trace`, {
