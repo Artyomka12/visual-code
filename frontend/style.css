@@ -917,6 +917,17 @@ body, .card, .scope-block, .card-header, .editor-footer,
 .fg-loop-range { opacity: 0.70; font-size: 12px; }
 .fg-loop-iter  { color: #67E8F9; font-weight: 600; font-size: 12px; }
 
+/* Condition */
+.fg-node--condition {
+  background: #1A0E00;
+  border-color: #B45309;
+  color: #FED7AA;
+}
+.fg-node--condition .fg-node-type { color: #F97316; }
+.fg-cond-expr  { display: block; font-size: 11px; opacity: 0.70; margin-bottom: 2px; }
+.fg-cond-true  { display: block; color: #4ADE80; font-weight: 700; font-size: 13px; }
+.fg-cond-false { display: block; color: #F87171; font-weight: 700; font-size: 13px; }
+
 /* ===== Pulse ring (added/removed by JS) ===== */
 .fg-pulse {
   position: absolute;

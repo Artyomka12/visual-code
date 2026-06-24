@@ -38,8 +38,11 @@ const FG_NODE_TYPES = {
     typeLabel: 'LOOP',
     makeLabel: (op) => `${op.variable} : ${op.start} → ${op.end}`,
   },
+  condition: {
+    typeLabel: 'IF',
+    makeLabel: (op) => op.expression,
+  },
   // Reserved for future:
-  // condition: { typeLabel: 'IF',        makeLabel: (op) => ... },
   // function:  { typeLabel: 'CALL',      makeLabel: (op) => ... },
 };
 
@@ -50,8 +53,29 @@ const FG_COLORS = {
   print:      { border:'#176A42', glow:'rgba(34,197,94,0.45)',  outer:'rgba(34,197,94,0.18)',  pulse:'#22C55E' },
   console:    { border:'#5B35A8', glow:'rgba(139,92,246,0.45)', outer:'rgba(139,92,246,0.18)', pulse:'#8B5CF6' },
   loop:       { border:'#0E7490', glow:'rgba(6,182,212,0.50)',  outer:'rgba(6,182,212,0.18)',  pulse:'#06B6D4' },
+  condition:  { border:'#B45309', glow:'rgba(251,146,60,0.50)', outer:'rgba(251,146,60,0.18)', pulse:'#F97316' },
 };
 function fgColors(type) { return FG_COLORS[type] || FG_COLORS.assignment; }
+
+/* Evaluates a simple two-operand condition using current variable snapshot.
+   operands can be variable names (looked up in vars) or numeric literals. */
+function evaluateCondition(op1, operator, op2, vars) {
+  const lhsIsVar = /^[a-zA-Z_]/.test(op1);
+  const rhsIsVar = /^[a-zA-Z_]/.test(op2);
+  if (lhsIsVar && !Object.prototype.hasOwnProperty.call(vars, op1)) return false;
+  if (rhsIsVar && !Object.prototype.hasOwnProperty.call(vars, op2)) return false;
+  const lhs = lhsIsVar ? Number(vars[op1]) : parseFloat(op1);
+  const rhs = rhsIsVar ? Number(vars[op2]) : parseFloat(op2);
+  switch (operator) {
+    case '>':  return lhs > rhs;
+    case '<':  return lhs < rhs;
+    case '>=': return lhs >= rhs;
+    case '<=': return lhs <= rhs;
+    case '==': return lhs === rhs;
+    case '!=': return lhs !== rhs;
+    default:   return false;
+  }
+}
 
 /* Detects binary arithmetic: var = operand OP operand
    At least one operand must be a variable name (starts with a letter) so that
@@ -60,6 +84,8 @@ function fgColors(type) { return FG_COLORS[type] || FG_COLORS.assignment; }
    parenthesised and multi-operator expressions at the AST level. */
 const BINARY_ASSIGN_RE = /^(\w+)\s*=\s*(\w+|\d+\.?\d*)\s*([-+*/])\s*(\w+|\d+\.?\d*)\s*$/;
 const FOR_RANGE_RE     = /^for\s+(\w+)\s+in\s+range\s*\(\s*(\d+)\s*\)\s*:/;
+// Detects: if VAR_OR_NUM OP VAR_OR_NUM: (multi-char ops listed first to prevent partial match)
+const IF_COND_RE       = /^if\s+(\w+|\d+\.?\d*)\s*(>=|<=|!=|==|>|<)\s*(\w+|\d+\.?\d*)\s*:/;
 
 /* ===== DOM refs ===== */
 const fgView    = document.getElementById('flow-graph-view');
@@ -100,10 +126,14 @@ function parseOps(steps, sourceLines = []) {
   const loopInfo        = {};
   const loopBodyLineNums = new Set(); // 1-based line numbers that are loop body lines
 
+  // ifLineInfo[1-based lineNum] = { expression, op1, operator, op2 }
+  const ifLineInfo     = {};
+  const emittedIfLines = new Set();
+
   sourceLines.forEach((line, i) => {
-    const m = FOR_RANGE_RE.exec(line.trim());
-    if (m) {
-      loopInfo[m[1]] = { end: parseInt(m[2]), emitted: false, op: null, printLabel: null };
+    const mLoop = FOR_RANGE_RE.exec(line.trim());
+    if (mLoop) {
+      loopInfo[mLoop[1]] = { end: parseInt(mLoop[2]), emitted: false, op: null, printLabel: null };
       const forIndent = line.length - line.trimStart().length;
       for (let j = i + 1; j < sourceLines.length; j++) {
         const bl = sourceLines[j];
@@ -114,6 +144,11 @@ function parseOps(steps, sourceLines = []) {
           break;
         }
       }
+    }
+
+    const mIf = IF_COND_RE.exec(line.trim());
+    if (mIf) {
+      ifLineInfo[i + 1] = { expression: `${mIf[1]} ${mIf[2]} ${mIf[3]}`, op1: mIf[1], operator: mIf[2], op2: mIf[3] };
     }
   });
 
@@ -128,6 +163,27 @@ function parseOps(steps, sourceLines = []) {
     // prevLineIdx = the line that JUST RAN (producing current vars state).
     const isBodyLine = loopBodyLineNums.has(prevLineIdx);
     const sourceLine = (sourceLines[prevLineIdx - 1] || '').trim();
+
+    // Detect if-condition line (prevLineIdx = the line that just ran before this step)
+    if (ifLineInfo[prevLineIdx] && !emittedIfLines.has(prevLineIdx)) {
+      const info = ifLineInfo[prevLineIdx];
+      if (isBodyLine) {
+        // Inside a loop body: record on the loop op, don't emit a standalone condition op.
+        // The per-iteration result is evaluated at animation time from token.conditionResult.
+        const li = activeLoop();
+        if (li && li.op && !li.op.bodyCondition) {
+          li.op.bodyCondition = { expression: info.expression, op1: info.op1, operator: info.operator, op2: info.op2 };
+        }
+      } else {
+        // Standalone if: emit a condition op with a fixed result.
+        ops.push({
+          type:       'condition',
+          expression: info.expression,
+          result:     evaluateCondition(info.op1, info.operator, info.op2, prevVars),
+        });
+      }
+      emittedIfLines.add(prevLineIdx);
+    }
 
     // Detect variable changes
     for (const [k, v] of Object.entries(vars)) {
@@ -194,18 +250,48 @@ function parseOps(steps, sourceLines = []) {
     prevLineIdx = step.line || prevLineIdx;
   }
 
-  // Post-pass: insert one PRINT node op right after each loop op that has body outputs.
+  // Post-pass: condition false-branch — the last step's line was the if line itself,
+  // so no subsequent step had prevLineIdx = if_line. Emit the condition op now.
+  if (ifLineInfo[prevLineIdx] && !emittedIfLines.has(prevLineIdx)) {
+    const info = ifLineInfo[prevLineIdx];
+    ops.push({
+      type:       'condition',
+      expression: info.expression,
+      result:     evaluateCondition(info.op1, info.operator, info.op2, prevVars),
+    });
+  }
+
+  // Post-pass: expand loop body ops into the flat node sequence.
   const finalOps = [];
   for (const op of ops) {
     finalOps.push(op);
-    if (op.type === 'loop' && op.outputs.length > 0) {
+    if (op.type === 'loop') {
       const li = Object.values(loopInfo).find(l => l.op === op);
-      finalOps.push({
-        type:       'print',
-        label:      li?.printLabel || `print(${op.variable})`,
-        text:       null,
-        isLoopBody: true,
-      });
+      if (op.bodyCondition) {
+        // Loop with conditional print body → LOOP → CONDITION → PRINT (if any output)
+        finalOps.push({
+          type:           'condition',
+          expression:     op.bodyCondition.expression,
+          result:         false,       // placeholder; overridden per-token via token.conditionResult
+          isLoopBodyCond: true,
+        });
+        if (op.outputs.length > 0) {
+          finalOps.push({
+            type:       'print',
+            label:      li?.printLabel || `print(${op.variable})`,
+            text:       null,
+            isLoopBody: true,
+          });
+        }
+      } else if (op.outputs.length > 0) {
+        // Loop with simple print body → LOOP → PRINT
+        finalOps.push({
+          type:       'print',
+          label:      li?.printLabel || `print(${op.variable})`,
+          text:       null,
+          isLoopBody: true,
+        });
+      }
     }
   }
 
@@ -315,6 +401,40 @@ function buildTokens(ops, nodes) {
         consoleLines,
         currentVar:    op.varName,
       });
+
+    } else if (op.type === 'loop' && op.bodyCondition) {
+      // for i in range(N): if VAR OP VAL: print(VAR)
+      // N iteration tokens; each knows its own condition result.
+      const { variable, start, end, outputs, bodyCondition } = op;
+      const N = end - start;
+      let outputConsumed = 0;
+
+      for (let iter = 0; iter < N; iter++) {
+        const iterValue  = start + iter;
+        const condVars   = { [variable]: iterValue };
+        const condResult = evaluateCondition(
+          bodyCondition.op1, bodyCondition.operator, bodyCondition.op2, condVars
+        );
+
+        // TRUE tokens progressively accumulate console output; FALSE tokens get [].
+        let consoleLines = [];
+        if (condResult) {
+          outputConsumed++;
+          consoleLines = outputs.slice(0, outputConsumed);
+        }
+
+        tokens.push({
+          id:              `tok_loop_${i}_${iter}`,
+          label:           `${variable} = ${iterValue}`,
+          startNodeId,
+          consoleNodeId:   consoleId,
+          consoleLines,
+          currentVar:      variable,
+          iterValue,
+          conditionResult: condResult,  // animateCondition reads this to decide TRUE/FALSE
+        });
+      }
+      loopPrintOffset += outputs.length;
 
     } else if (op.type === 'loop' && op.outputs && op.outputs.length > 0) {
       // for i in range(N): print(i) — one iteration token per loop pass.
@@ -642,6 +762,65 @@ function animateLoopIterations(el, loopNode, path, nodeMap, curIdx, token, onCom
   runIteration(0);
 }
 
+/* Updates the ConditionNode label to show TRUE / FALSE after token arrives. */
+function showConditionResult(nodeId, result) {
+  const entry = fgNodeReg.get(nodeId);
+  if (!entry) return;
+  const labelEl = entry.el.querySelector('.fg-node-label');
+  if (!labelEl) return;
+  const op  = entry.node._op;
+  const cls  = result ? 'fg-cond-true' : 'fg-cond-false';
+  const text = result ? 'TRUE' : 'FALSE';
+  labelEl.innerHTML =
+    `<span class="fg-cond-expr">${fgEsc(op.expression)}</span>` +
+    `<span class="${cls}">${text}</span>`;
+}
+
+/* ===================================================
+   ConditionNode animation.
+
+   Token arrives at the IF node, the result (TRUE/FALSE)
+   is revealed inside the node.
+
+   TRUE  → short pause, then token continues along path.
+   FALSE → token dissolves at the condition node;
+           the walk stops here (Console is never updated).
+   =================================================== */
+function animateCondition(el, conditionNode, path, nodeMap, curIdx, token, onComplete) {
+  const op = conditionNode._op;
+  // Loop-body conditions evaluate per-token; standalone conditions use op.result.
+  const result = (token.conditionResult !== undefined) ? token.conditionResult : op.result;
+
+  // Scale-in bounce (matches other node arrival animations)
+  gsap.fromTo(el,
+    { scale: 1.2 },
+    { scale: 1, duration: 0.20, ease: 'back.out(1.3)',
+      onComplete: () => {
+        showConditionResult(conditionNode.id, result);
+
+        if (result) {
+          // TRUE: brief pause, then continue along the path
+          const t = setTimeout(() => walkPath(el, path, nodeMap, curIdx, token, onComplete), 380);
+          fgTimers.push(t);
+        } else {
+          // FALSE: token dissolves; no console output
+          const t = setTimeout(() => {
+            gsap.to(el, {
+              opacity: 0, scale: 0.55, duration: 0.34, ease: 'power2.in',
+              onComplete: () => {
+                el.remove();
+                const t2 = setTimeout(() => { if (onComplete) onComplete(); }, 260);
+                fgTimers.push(t2);
+              },
+            });
+          }, 440);
+          fgTimers.push(t);
+        }
+      },
+    }
+  );
+}
+
 /* Updates the LoopNode label to show which iteration is currently running. */
 function highlightLoopIteration(nodeId, iterVal) {
   const entry = fgNodeReg.get(nodeId);
@@ -757,6 +936,9 @@ function walkPath(el, path, nodeMap, idx, token, onComplete) {
       } else if (nextNode.type === 'loop') {
         // Arriving at a LoopNode that has body ops: run N iterations
         animateLoopIterations(el, nextNode, path, nodeMap, idx + 1, token, onComplete);
+      } else if (nextNode.type === 'condition') {
+        // Arriving at a ConditionNode: evaluate and either continue or dissolve
+        animateCondition(el, nextNode, path, nodeMap, idx + 1, token, onComplete);
       } else {
         gsap.fromTo(el,
           { scale: 1.2 },

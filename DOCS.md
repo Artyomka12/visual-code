@@ -314,6 +314,65 @@ for i in range(3):
 
 ---
 
+#### ConditionNode
+
+**Назначение:** простое условие `if VAR OP OPERAND:` — пропускает токен дальше (TRUE) или растворяет его (FALSE).
+
+**Пример кода:**
+```python
+x = 5
+if x > 3:
+    print(x)
+```
+
+**В графе:**
+```
+┌─────────────────┐
+│  IF             │
+│  x > 3          │  ← условие (исходное состояние)
+└─────────────────┘
+```
+
+После прихода токена:
+```
+┌─────────────────┐
+│  IF             │
+│  x > 3          │  ← выражение (уменьшенный шрифт)
+│  TRUE           │  ← зелёный, если истина
+└─────────────────┘
+
+┌─────────────────┐
+│  IF             │
+│  x > 3          │
+│  FALSE          │  ← красный, если ложь
+└─────────────────┘
+```
+
+**Цвет:** оранжевый (`#B45309`).
+
+**Поддерживаемые операторы:** `>`, `<`, `>=`, `<=`, `==`, `!=`
+
+**Поддерживаемые операнды:** переменная OP константа, переменная OP переменная.
+
+**Поведение:**
+
+- **TRUE** — токен продолжает движение к следующему узлу (PRINT → CONSOLE).
+- **FALSE** — токен растворяется на ConditionNode; Console не обновляется.
+
+**Граф для TRUE:**
+```
+ASSIGN(x=5) → CONDITION(x > 3) → PRINT(x) → CONSOLE
+```
+
+**Граф для FALSE:**
+```
+ASSIGN(x=2) → CONDITION(x > 3)   ← токен останавливается здесь
+```
+
+**MVP ограничения:** поддерживается только `print(var)` в теле `if`. `else`, вложенные условия, несколько операций в теле — не поддерживаются.
+
+---
+
 #### ConsoleNode
 
 **Назначение:** накопитель вывода `print()`. Последний узел в каждой цепочке.
@@ -422,6 +481,33 @@ print(x)
 Граф: `ASSIGN(x=0) → LOOP(i:0→3) → COMPUTE(x=x+1) → PRINT(x) → CONSOLE`
 Один токен `[x=0]` проходит 3 итерации через COMPUTE → консоль: `3`
 
+**Условие (TRUE):**
+```python
+x = 5
+if x > 3:
+    print(x)
+```
+Граф: `ASSIGN(x=5) → CONDITION(x > 3) → PRINT(x) → CONSOLE`
+Токен `[x=5]` проходит через CONDITION (показывает TRUE) → консоль: `5`
+
+**Условие (FALSE):**
+```python
+x = 2
+if x > 3:
+    print(x)
+```
+Граф: `ASSIGN(x=2) → CONDITION(x > 3)`
+Токен `[x=2]` растворяется на CONDITION (показывает FALSE) → консоль пуста
+
+**Цикл с условием:**
+```python
+for i in range(5):
+    if i > 2:
+        print(i)
+```
+Граф: `LOOP(i:0→5) → CONDITION(i > 2) → PRINT(i) → CONSOLE`
+5 токенов: `i=0,1,2` — растворяются на CONDITION (FALSE); `i=3,4` — проходят к PRINT → CONSOLE → консоль: `3`, `4`
+
 ---
 
 ### Flow Graph Status
@@ -441,10 +527,12 @@ print(x)
 - ✓ Тёмная тема
 - ✓ Переключатель режимов (Classic / Flow Graph)
 - ✓ Подсветка текущей итерации на LoopNode
+- ✓ ConditionNode (`if VAR OP OPERAND:` + `print(var)` в теле)
+- ✓ LoopNode + ConditionNode (`for VAR in range(N): if VAR OP CONST: print(VAR)`)
 
 **Планируется:**
 
-- ConditionNode (`if / elif / else`)
+- ConditionNode: `else`, `elif`, вложенные условия
 - FunctionNode (`def` + вызов)
 - Вложенные циклы
 - Массивы и коллекции внутри тела цикла
@@ -1060,6 +1148,35 @@ const FG_NODE_TYPES = {
 ---
 
 ## Release Notes
+
+### v1.3.1
+
+**LoopNode + ConditionNode**
+
+- Добавлена поддержка `if VAR OP CONST:` внутри тела `for`-цикла с `print(var)` в теле.
+- Граф для нового сценария: `LOOP → CONDITION → PRINT → CONSOLE`.
+- **FALSE-итерации** (условие не выполнено) — токен растворяется на CONDITION; Console не обновляется.
+- **TRUE-итерации** (условие выполнено) — токен продолжает к PRINT → CONSOLE; Console накапливает вывод инкрементально.
+- Детектирование в `parseOps`: `if`-строка внутри тела цикла (`loopBodyLineNums`) записывается как `loop.bodyCondition` вместо отдельного condition-оп.
+- Post-pass `parseOps` разворачивает `loop.bodyCondition` в плоскую цепочку `[LOOP, CONDITION, PRINT]`.
+- `buildTokens`: для loop с `bodyCondition` создаёт N токенов, каждый с `conditionResult` (вычислено заранее по итерационному значению) и прогрессивным `consoleLines` только для TRUE-токенов.
+- `animateCondition`: при наличии `token.conditionResult` использует его вместо статического `op.result`.
+- Все 7 существующих сценариев (включая простой `for…print`, `if` standalone) не затронуты.
+
+### v1.3.0
+
+**ConditionNode — MVP**
+
+- Добавлен **ConditionNode** (`IF`) в Flow Graph View.
+- Поддерживаемый синтаксис: `if VAR OP OPERAND:` / `if VAR OP VAR:`, где OP ∈ `>`, `<`, `>=`, `<=`, `==`, `!=`.
+- Тело условия: только `print(var)` (MVP).
+- **TRUE-ветка** — токен проходит через CONDITION (показывает `TRUE` зелёным) и продолжает движение к PRINT → CONSOLE.
+- **FALSE-ветка** — токен растворяется на CONDITION (показывает `FALSE` красным); Console не обновляется.
+- Детектирование: в `parseOps` добавлен pre-scan `ifLineInfo`, детект в main loop (true-ветка) и post-pass (false-ветка).
+- Оценка условия: `evaluateCondition()` — численное сравнение по снимку переменных в момент выполнения `if`.
+- Цвет узла: оранжевый (`#B45309`).
+- Реестр узлов расширен: новая запись в `FG_NODE_TYPES` и `FG_COLORS`.
+- Все 5 существующих Flow Graph сценариев не затронуты.
 
 ### v1.2.0
 
