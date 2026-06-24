@@ -1,7 +1,7 @@
 import sys
 import copy
 
-MAX_STEPS = 300
+MAX_STEPS = 600
 
 SAFE_BUILTINS = {
     'print': None,  # replaced at runtime

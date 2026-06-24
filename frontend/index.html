@@ -53,6 +53,14 @@
             <textarea id="code-input">for i in range(5):
     print(i)</textarea>
           </div>
+          <div class="mode-selector-row">
+            <span class="mode-label">Режим:</span>
+            <div class="mode-toggle">
+              <button class="mode-btn active" data-mode="classic">Classic</button>
+              <button class="mode-btn" data-mode="flow_graph">Flow Graph</button>
+            </div>
+            <span class="mode-exp-badge">Experimental</span>
+          </div>
           <div class="editor-footer">
             <div id="syntax-hint" class="syntax-hint">
               Доступно: переменные, if/elif/else, for, while, print, списки
@@ -119,7 +127,7 @@
       </div>
 
       <div id="truncated-warn" class="warn-banner hidden">
-        ⚠ Код содержит более 300 шагов — показаны первые 300
+        ⚠ Код содержит более 600 шагов — показаны первые 600
       </div>
 
       <!-- Top row: code + sidebar -->
@@ -178,6 +186,20 @@
       </div>
     </section>
 
+    <!-- Flow Graph view -->
+    <section id="flow-graph-view" class="view">
+      <div class="viz-header">
+        <button id="fg-back-btn" class="btn btn-secondary">← Изменить код</button>
+        <div class="viz-title" id="fg-title">Flow Graph</div>
+        <div class="fg-exp-badge">Experimental</div>
+      </div>
+      <div id="fg-canvas-wrap">
+        <svg id="fg-arrows" aria-hidden="true"></svg>
+        <div id="fg-nodes"></div>
+        <div id="fg-tokens"></div>
+      </div>
+    </section>
+
   </main>
 
   <!-- Ball layer (for animations) -->
@@ -190,5 +212,6 @@
   <script src="js/api.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/animator.js"></script>
+  <script src="js/flow-graph.js"></script>
 </body>
 </html>

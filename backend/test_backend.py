@@ -45,12 +45,12 @@ r5 = trace_code(code5)
 check('T5: list ops valid', valid5)
 check('T5: list output = 4', r5['steps'][-1]['output'] == ['4'], f'output={r5["steps"][-1]["output"]}')
 
-# Test 6: truncation at 300 steps
-code6 = 'for i in range(1000):\n    x = i'
+# Test 6: truncation at 600 steps
+code6 = 'for i in range(2000):\n    x = i'
 r6 = trace_code(code6)
 line_steps6 = [s for s in r6['steps'] if s.get('event', 'line') == 'line']
 check('T6: truncation activated', r6['truncated'], f'steps={len(r6["steps"])}')
-check('T6: max 300 line-steps', len(line_steps6) <= 300, f'line_steps={len(line_steps6)}')
+check('T6: max 600 line-steps', len(line_steps6) <= 600, f'line_steps={len(line_steps6)}')
 
 # Test 7: runtime error captured
 code7 = 'x = 1 / 0'

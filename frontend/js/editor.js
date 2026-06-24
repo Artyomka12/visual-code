@@ -152,11 +152,23 @@ document.getElementById('example-select').addEventListener('change', function ()
   this.value = '';
 });
 
+/* ===== Visualization mode ===== */
+let visualizationMode = 'classic';
+
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    visualizationMode = btn.dataset.mode;
+  });
+});
+
 /* ===== Run button & view switching ===== */
 const runBtn     = document.getElementById('run-btn');
 const backBtn    = document.getElementById('back-btn');
 const inputView  = document.getElementById('input-view');
 const vizView    = document.getElementById('viz-view');
+const fgView     = document.getElementById('flow-graph-view');
 const errorBanner= document.getElementById('error-banner');
 const errorText  = document.getElementById('error-text');
 const truncWarn  = document.getElementById('truncated-warn');
@@ -185,26 +197,29 @@ runBtn.addEventListener('click', async () => {
       return;
     }
 
-    // Build visualization
-    buildCodeDisplay(code);
-    if (result.truncated) {
-      truncWarn.textContent = '⚠ Код содержит более 300 шагов — показаны первые 300';
-      truncWarn.classList.remove('hidden');
-    } else if (result.error) {
-      const lineInfo = result.error.line ? ` (строка ${result.error.line})` : '';
-      truncWarn.textContent = `⚠ Ошибка выполнения${lineInfo}: ${result.error.message}`;
-      truncWarn.classList.remove('hidden');
-    } else {
-      truncWarn.classList.add('hidden');
-    }
-
-    // Switch view
     inputView.classList.remove('active');
-    vizView.classList.add('active');
-    document.getElementById('viz-title').textContent = detectTitle(code);
 
-    // Start animator
-    startAnimation(result.steps, result.error);
+    if (visualizationMode === 'flow_graph') {
+      // ── Flow Graph mode ──
+      fgView.classList.add('active');
+      startFlowGraph(result.steps, code);
+    } else {
+      // ── Classic mode ──
+      buildCodeDisplay(code);
+      if (result.truncated) {
+        truncWarn.textContent = '⚠ Код содержит более 600 шагов — показаны первые 600';
+        truncWarn.classList.remove('hidden');
+      } else if (result.error) {
+        const lineInfo = result.error.line ? ` (строка ${result.error.line})` : '';
+        truncWarn.textContent = `⚠ Ошибка выполнения${lineInfo}: ${result.error.message}`;
+        truncWarn.classList.remove('hidden');
+      } else {
+        truncWarn.classList.add('hidden');
+      }
+      vizView.classList.add('active');
+      document.getElementById('viz-title').textContent = detectTitle(code);
+      startAnimation(result.steps, result.error);
+    }
 
   } catch (err) {
     showError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.');
