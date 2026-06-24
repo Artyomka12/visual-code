@@ -1,12 +1,13 @@
 /* ===== Flow Graph — Experimental Mode ===== */
 
 /* --- Layout constants (JS source of truth; CSS mirrors these) --- */
-const FG_NODE_W   = 160;
-const FG_NODE_H   = 80;
-const FG_GAP_X    = 60;
-const FG_CENTER_Y = 130;
-const FG_TOKEN_W  = 100;
-const FG_TOKEN_H  = 32;
+const FG_NODE_W    = 160;
+const FG_NODE_H    = 80;
+const FG_GAP_X     = 60;
+const FG_CENTER_Y  = 130;
+const FG_BRANCH_Y  = 70;   // vertical offset for if/else branch nodes above/below centre
+const FG_TOKEN_W   = 100;
+const FG_TOKEN_H   = 32;
 
 /* ===================================================
    Node type registry
@@ -120,18 +121,23 @@ function parseOps(steps, sourceLines = []) {
   const ops = [];
   let prevVars = {}, prevOutput = [], prevLineIdx = 0;
 
-  // Pre-scan: detect for-range loops and their body line numbers.
+  // Pre-scan: detect for-range loops, if conditions, and else clauses.
   // sourceLines must be the ORIGINAL (non-trimmed) lines for indentation detection.
   // loopInfo[varName] = { end, emitted, op, printLabel }
-  const loopInfo        = {};
+  const loopInfo         = {};
   const loopBodyLineNums = new Set(); // 1-based line numbers that are loop body lines
 
-  // ifLineInfo[1-based lineNum] = { expression, op1, operator, op2 }
+  // ifLineInfo[1-based lineNum] = { expression, op1, operator, op2, ifPrintLabel }
   const ifLineInfo     = {};
   const emittedIfLines = new Set();
 
+  // elseInfo[ifLine_1based] = { elseBodyLines: Set<1based>, elsePrintLabel: string|null }
+  const elseInfo = {};
+
   sourceLines.forEach((line, i) => {
-    const mLoop = FOR_RANGE_RE.exec(line.trim());
+    const trimmed = line.trim();
+
+    const mLoop = FOR_RANGE_RE.exec(trimmed);
     if (mLoop) {
       loopInfo[mLoop[1]] = { end: parseInt(mLoop[2]), emitted: false, op: null, printLabel: null };
       const forIndent = line.length - line.trimStart().length;
@@ -146,10 +152,75 @@ function parseOps(steps, sourceLines = []) {
       }
     }
 
-    const mIf = IF_COND_RE.exec(line.trim());
+    const mIf = IF_COND_RE.exec(trimmed);
     if (mIf) {
-      ifLineInfo[i + 1] = { expression: `${mIf[1]} ${mIf[2]} ${mIf[3]}`, op1: mIf[1], operator: mIf[2], op2: mIf[3] };
+      const ifLine   = i + 1; // 1-based
+      const ifIndent = line.length - line.trimStart().length;
+      // Scan if-body to find the print label
+      let ifPrintLabel = null;
+      for (let j = i + 1; j < sourceLines.length; j++) {
+        const bl = sourceLines[j];
+        if (bl.trim() === '') continue;
+        if (bl.length - bl.trimStart().length > ifIndent) {
+          if (!ifPrintLabel) {
+            const pm = /^(print\s*\([^)]*\))/.exec(bl.trim());
+            if (pm) ifPrintLabel = pm[1];
+          }
+        } else { break; }
+      }
+      ifLineInfo[ifLine] = {
+        expression: `${mIf[1]} ${mIf[2]} ${mIf[3]}`,
+        op1: mIf[1], operator: mIf[2], op2: mIf[3],
+        ifPrintLabel,
+      };
     }
+
+    // Detect else: — link to the nearest preceding if at the same indentation.
+    if (trimmed === 'else:') {
+      const elseIndent = line.length - line.trimStart().length;
+      for (let j = i - 1; j >= 0; j--) {
+        const jl = sourceLines[j];
+        if (jl.trim() === '') continue;
+        const jIndent = jl.length - jl.trimStart().length;
+        if (jIndent === elseIndent && IF_COND_RE.test(jl.trim())) {
+          const ifLine = j + 1; // 1-based
+          // Scan else-body lines
+          const elseBodyLines = new Set();
+          let elsePrintLabel  = null;
+          for (let k = i + 1; k < sourceLines.length; k++) {
+            const kl = sourceLines[k];
+            if (kl.trim() === '') continue;
+            if (kl.length - kl.trimStart().length > elseIndent) {
+              elseBodyLines.add(k + 1); // 1-based
+              if (!elsePrintLabel) {
+                const pm = /^(print\s*\([^)]*\))/.exec(kl.trim());
+                if (pm) elsePrintLabel = pm[1];
+              }
+            } else { break; }
+          }
+          elseInfo[ifLine] = { elseBodyLines, elsePrintLabel };
+          break;
+        }
+      }
+    }
+  });
+
+  // Build reverse-lookup maps for output attribution.
+  // ifBodyLineOfElse[bodyLine_1based] = ifLine — only for ifs that have an else clause.
+  const ifBodyLineOfElse     = {};
+  const elseBodyLineToIfLine = {};
+  Object.entries(elseInfo).forEach(([ifLineStr, info]) => {
+    const ifLine   = parseInt(ifLineStr);
+    const srcIdx   = ifLine - 1; // 0-based index into sourceLines
+    const ifIndent = sourceLines[srcIdx].length - sourceLines[srcIdx].trimStart().length;
+    for (let j = srcIdx + 1; j < sourceLines.length; j++) {
+      const bl = sourceLines[j];
+      if (bl.trim() === '') continue;
+      if (bl.length - bl.trimStart().length > ifIndent) {
+        ifBodyLineOfElse[j + 1] = ifLine; // 1-based
+      } else { break; }
+    }
+    info.elseBodyLines.forEach(l => { elseBodyLineToIfLine[l] = ifLine; });
   });
 
   // Return the most recently emitted loop op (if any).
@@ -175,12 +246,20 @@ function parseOps(steps, sourceLines = []) {
           li.op.bodyCondition = { expression: info.expression, op1: info.op1, operator: info.operator, op2: info.op2 };
         }
       } else {
-        // Standalone if: emit a condition op with a fixed result.
-        ops.push({
+        // Standalone if (with or without else).
+        const hasElse  = !!elseInfo[prevLineIdx];
+        const condOp = {
           type:       'condition',
           expression: info.expression,
           result:     evaluateCondition(info.op1, info.operator, info.op2, prevVars),
-        });
+          hasElse,
+          _ifLine:    prevLineIdx,
+        };
+        if (hasElse) {
+          condOp.truePrintLabel  = info.ifPrintLabel                      || 'print(…)';
+          condOp.falsePrintLabel = elseInfo[prevLineIdx].elsePrintLabel    || 'print(…)';
+        }
+        ops.push(condOp);
       }
       emittedIfLines.add(prevLineIdx);
     }
@@ -231,17 +310,29 @@ function parseOps(steps, sourceLines = []) {
 
     // Detect print() outputs (output buffer grew)
     const newLines = output.slice(prevOutput.length);
-    for (const line of newLines) {
-      const matchEntry = Object.entries(vars).find(([, v]) => String(v) === line);
+    for (const lineText of newLines) {
+      const matchEntry = Object.entries(vars).find(([, v]) => String(v) === lineText);
       const printLabel = matchEntry ? `print(${matchEntry[0]})` : 'print(…)';
 
       if (matchEntry && loopInfo[matchEntry[0]]) {
         // Print of a loop variable — accumulate in the loop op; don't emit a separate op.
         const li = loopInfo[matchEntry[0]];
-        if (li.op) li.op.outputs.push(line);
+        if (li.op) li.op.outputs.push(lineText);
         if (!li.printLabel) li.printLabel = printLabel;
+      } else if (ifBodyLineOfElse[prevLineIdx] !== undefined) {
+        // Output came from the true-body of an if/else — attach to the condition op.
+        const ifLine  = ifBodyLineOfElse[prevLineIdx];
+        const condOp  = ops.slice().reverse().find(o => o.type === 'condition' && o._ifLine === ifLine);
+        if (condOp) condOp._trueText = lineText;
+        // Don't emit a standalone print op.
+      } else if (elseBodyLineToIfLine[prevLineIdx] !== undefined) {
+        // Output came from the false-body (else) of an if/else — attach to the condition op.
+        const ifLine  = elseBodyLineToIfLine[prevLineIdx];
+        const condOp  = ops.slice().reverse().find(o => o.type === 'condition' && o._ifLine === ifLine);
+        if (condOp) condOp._falseText = lineText;
+        // Don't emit a standalone print op.
       } else {
-        ops.push({ type: 'print', label: printLabel, text: line });
+        ops.push({ type: 'print', label: printLabel, text: lineText });
       }
     }
 
@@ -250,22 +341,47 @@ function parseOps(steps, sourceLines = []) {
     prevLineIdx = step.line || prevLineIdx;
   }
 
-  // Post-pass: condition false-branch — the last step's line was the if line itself,
-  // so no subsequent step had prevLineIdx = if_line. Emit the condition op now.
+  // Post-pass 1: if the very last step's line was the if-line (condition never reached its
+  // body — e.g. standalone FALSE without else), emit the condition op now.
   if (ifLineInfo[prevLineIdx] && !emittedIfLines.has(prevLineIdx)) {
-    const info = ifLineInfo[prevLineIdx];
-    ops.push({
+    const info    = ifLineInfo[prevLineIdx];
+    const hasElse = !!elseInfo[prevLineIdx];
+    const condOp  = {
       type:       'condition',
       expression: info.expression,
       result:     evaluateCondition(info.op1, info.operator, info.op2, prevVars),
-    });
+      hasElse,
+      _ifLine:    prevLineIdx,
+    };
+    if (hasElse) {
+      condOp.truePrintLabel  = info.ifPrintLabel                      || 'print(…)';
+      condOp.falsePrintLabel = elseInfo[prevLineIdx].elsePrintLabel    || 'print(…)';
+    }
+    ops.push(condOp);
   }
 
-  // Post-pass: expand loop body ops into the flat node sequence.
+  // Post-pass 2: expand ops into the flat node sequence used by buildNodes.
   const finalOps = [];
   for (const op of ops) {
     finalOps.push(op);
-    if (op.type === 'loop') {
+
+    if (op.type === 'condition' && op.hasElse) {
+      // Y-split: insert one PRINT node for the true branch and one for the false branch.
+      // buildNodes positions them above / below FG_CENTER_Y; buildEdges creates two edges
+      // from CONDITION and two edges converging back into CONSOLE.
+      finalOps.push({
+        type:   'print',
+        label:  op.truePrintLabel  || 'print(…)',
+        text:   op._trueText  || null,
+        branch: 'true',
+      });
+      finalOps.push({
+        type:   'print',
+        label:  op.falsePrintLabel || 'print(…)',
+        text:   op._falseText || null,
+        branch: 'false',
+      });
+    } else if (op.type === 'loop') {
       const li = Object.values(loopInfo).find(l => l.op === op);
       if (op.bodyCondition) {
         // Loop with conditional print body → LOOP → CONDITION → PRINT (if any output)
@@ -305,8 +421,10 @@ function parseOps(steps, sourceLines = []) {
    Positions are computed here; no hardcoded coords.
    =================================================== */
 function buildNodes(expandedOps, canvasW) {
-  const hasPrints  = expandedOps.some(o => o.type === 'print');
-  const totalCount = expandedOps.length + (hasPrints ? 1 : 0);
+  const hasPrints = expandedOps.some(o => o.type === 'print');
+  // Branch pairs (true+false) share one X column, so subtract one slot per true-branch node.
+  const branchTrueCount = expandedOps.filter(o => o.branch === 'true').length;
+  const totalCount      = expandedOps.length - branchTrueCount + (hasPrints ? 1 : 0);
 
   const totalW = totalCount * FG_NODE_W + Math.max(0, totalCount - 1) * FG_GAP_X;
   let curX     = Math.max(40, Math.round((canvasW - totalW) / 2));
@@ -315,15 +433,23 @@ function buildNodes(expandedOps, canvasW) {
 
   expandedOps.forEach((op, i) => {
     const typeDef = FG_NODE_TYPES[op.type] || FG_NODE_TYPES.assignment;
+
+    // Branch nodes are offset vertically to create the Y-split visual.
+    let nodeY = FG_CENTER_Y;
+    if (op.branch === 'true')  nodeY = FG_CENTER_Y - FG_BRANCH_Y;
+    if (op.branch === 'false') nodeY = FG_CENTER_Y + FG_BRANCH_Y;
+
     nodes.push({
       id:    `node_${i}`,
       type:  op.type,
       label: typeDef.makeLabel(op),
       x:     curX,
-      y:     FG_CENTER_Y,
+      y:     nodeY,
       _op:   op,
     });
-    curX += FG_NODE_W + FG_GAP_X;
+
+    // True-branch shares the X column with the following false-branch → don't advance curX.
+    if (op.branch !== 'true') curX += FG_NODE_W + FG_GAP_X;
   });
 
   if (hasPrints) {
@@ -342,15 +468,42 @@ function buildNodes(expandedOps, canvasW) {
 
 /* ===================================================
    STEP 3 — buildEdges
-   Linear chain: node[0] → node[1] → … → node[n]
-   Replace this function to get a different topology
-   (tree, DAG, etc.) in the future.
+   Mostly linear chain, but detects if/else Y-split pairs
+   and creates two edges from CONDITION plus two converging
+   edges back into CONSOLE.
+
+   edge.branch: 'true' | 'false' | 'default'
    =================================================== */
 function buildEdges(nodes) {
   const edges = [];
+  let skip = 0;   // remaining nodes to skip after handling a branch pair
+
   for (let i = 0; i < nodes.length - 1; i++) {
-    edges.push({ id: `e_${i}`, from: nodes[i].id, to: nodes[i + 1].id });
+    if (skip > 0) { skip--; continue; }
+
+    const n    = nodes[i];
+    const next = nodes[i + 1];
+
+    if (next._op && next._op.branch === 'true' && i + 2 < nodes.length) {
+      // n = CONDITION-with-else, nodes[i+1] = PRINT_TRUE, nodes[i+2] = PRINT_FALSE
+      const pt = nodes[i + 1];
+      const pf = nodes[i + 2];
+      edges.push({ id: `e_${i}_t`,  from: n.id,  to: pt.id, branch: 'true'    });
+      edges.push({ id: `e_${i}_f`,  from: n.id,  to: pf.id, branch: 'false'   });
+      // Both branch prints converge into the node that follows them (CONSOLE).
+      if (i + 3 < nodes.length) {
+        const con = nodes[i + 3];
+        edges.push({ id: `e_${i+1}_c`, from: pt.id, to: con.id, branch: 'default' });
+        edges.push({ id: `e_${i+2}_c`, from: pf.id, to: con.id, branch: 'default' });
+        skip = 3; // skip PRINT_TRUE, PRINT_FALSE, CONSOLE from normal loop processing
+      } else {
+        skip = 2; // skip PRINT_TRUE, PRINT_FALSE (no node after)
+      }
+    } else {
+      edges.push({ id: `e_${i}`, from: n.id, to: next.id, branch: 'default' });
+    }
   }
+
   return edges;
 }
 
@@ -548,12 +701,16 @@ function renderFlowGraph(graph) {
     fgNodesEl.appendChild(el);
     fgNodeReg.set(node.id, { el, node });
 
-    // Staggered entrance
-    gsap.from(el, {
-      opacity: 0, scale: 0.85, y: 8,
-      duration: 0.28, ease: 'back.out(1.6)',
-      delay: 0.04 + i * 0.055,
-    });
+    // Staggered entrance — fallback to instant-visible if GSAP unavailable
+    try {
+      gsap.from(el, {
+        opacity: 0, scale: 0.85, y: 8,
+        duration: 0.28, ease: 'back.out(1.6)',
+        delay: 0.04 + i * 0.055,
+      });
+    } catch (_) {
+      el.style.opacity = '1';
+    }
   });
 
   /* --- SVG Arrows --- */
@@ -562,9 +719,14 @@ function renderFlowGraph(graph) {
 
   const defs = document.createElementNS(svgNS, 'defs');
   defs.innerHTML = `
-    <marker id="fga-head" markerWidth="9" markerHeight="7"
-            refX="8" refY="3.5" orient="auto">
+    <marker id="fga-head"       markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
       <polygon points="0 0,9 3.5,0 7" fill="#3B6FD4"/>
+    </marker>
+    <marker id="fga-head-true"  markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0,9 3.5,0 7" fill="#16A34A"/>
+    </marker>
+    <marker id="fga-head-false" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0,9 3.5,0 7" fill="#B91C1C"/>
     </marker>`;
   fgArrowEl.appendChild(defs);
 
@@ -572,6 +734,19 @@ function renderFlowGraph(graph) {
     const fn = nodeMap.get(edge.from);
     const tn = nodeMap.get(edge.to);
     if (!fn || !tn) continue;
+
+    const isTrueBranch  = edge.branch === 'true';
+    const isFalseBranch = edge.branch === 'false';
+
+    const strokeColor = isTrueBranch  ? '#16A34A'
+                      : isFalseBranch ? '#B91C1C'
+                      : '#2D5CB8';
+    const glowColor   = isTrueBranch  ? 'rgba(22,163,74,0.18)'
+                      : isFalseBranch ? 'rgba(185,28,28,0.18)'
+                      : 'rgba(59,111,212,0.15)';
+    const markerId    = isTrueBranch  ? 'fga-head-true'
+                      : isFalseBranch ? 'fga-head-false'
+                      : 'fga-head';
 
     const x1 = fn.x + FG_NODE_W;
     const y1 = fn.y + FG_NODE_H / 2;
@@ -583,21 +758,38 @@ function renderFlowGraph(graph) {
     // Glow layer
     const glow = document.createElementNS(svgNS, 'path');
     glow.setAttribute('d', d);
-    glow.setAttribute('stroke', '#3B6FD4');
-    glow.setAttribute('stroke-width', '4');
-    glow.setAttribute('stroke-opacity', '0.15');
+    glow.setAttribute('stroke', strokeColor);
+    glow.setAttribute('stroke-width', '5');
+    glow.setAttribute('stroke-opacity', '0.22');
     glow.setAttribute('fill', 'none');
     fgArrowEl.appendChild(glow);
 
     // Main line
     const line = document.createElementNS(svgNS, 'path');
     line.setAttribute('d', d);
-    line.setAttribute('stroke', '#2D5CB8');
+    line.setAttribute('stroke', strokeColor);
     line.setAttribute('stroke-width', '2');
-    line.setAttribute('stroke-opacity', '0.75');
+    line.setAttribute('stroke-opacity', '0.80');
     line.setAttribute('fill', 'none');
-    line.setAttribute('marker-end', 'url(#fga-head)');
+    line.setAttribute('marker-end', `url(#${markerId})`);
     fgArrowEl.appendChild(line);
+
+    // Branch edge labels (TRUE / FALSE)
+    if (isTrueBranch || isFalseBranch) {
+      const labelX = (x1 + mx) / 2;         // roughly 1/4 along the curve
+      const labelY = (y1 + y2) / 2 - 5;
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', String(Math.round(labelX)));
+      text.setAttribute('y', String(Math.round(labelY)));
+      text.setAttribute('fill',         strokeColor);
+      text.setAttribute('font-size',    '10');
+      text.setAttribute('font-family',  'monospace, monospace');
+      text.setAttribute('font-weight',  '700');
+      text.setAttribute('text-anchor',  'middle');
+      text.setAttribute('opacity',      '0.85');
+      text.textContent = isTrueBranch ? 'TRUE' : 'FALSE';
+      fgArrowEl.appendChild(text);
+    }
   }
 }
 
@@ -798,12 +990,13 @@ function animateCondition(el, conditionNode, path, nodeMap, curIdx, token, onCom
       onComplete: () => {
         showConditionResult(conditionNode.id, result);
 
-        if (result) {
-          // TRUE: brief pause, then continue along the path
+        if (result || op.hasElse) {
+          // TRUE → continue along the true path.
+          // FALSE with else → tracePath already routed us to the false branch; just continue.
           const t = setTimeout(() => walkPath(el, path, nodeMap, curIdx, token, onComplete), 380);
           fgTimers.push(t);
         } else {
-          // FALSE: token dissolves; no console output
+          // FALSE with no else: token dissolves; Console is never updated.
           const t = setTimeout(() => {
             gsap.to(el, {
               opacity: 0, scale: 0.55, duration: 0.34, ease: 'power2.in',
@@ -876,7 +1069,7 @@ function launchToken(token, nodeMap, edgeMap, onComplete) {
     onComplete: () => {
       litNode(token.startNodeId);
       if (token.iterValue !== undefined) highlightLoopIteration(token.startNodeId, token.iterValue);
-      const path = tracePath(token.startNodeId, edgeMap);
+      const path = tracePath(token.startNodeId, edgeMap, nodeMap);
       walkPath(el, path, nodeMap, 0, token, onComplete);
     },
   });
@@ -1041,22 +1234,37 @@ function tokenTop(node)  { return node.y + Math.round((FG_NODE_H - FG_TOKEN_H) /
 /* ===================================================
    Utilities
    =================================================== */
+// Returns Map<fromId, [{to, branch}]> — preserves branch metadata for tracePath.
 function buildEdgeMap(edges) {
   const map = new Map();
   for (const e of edges) {
     if (!map.has(e.from)) map.set(e.from, []);
-    map.get(e.from).push(e.to);
+    map.get(e.from).push({ to: e.to, branch: e.branch || 'default' });
   }
   return map;
 }
 
-function tracePath(startId, edgeMap) {
+// Follows edges from startId, picking the correct branch at CONDITION nodes with else.
+function tracePath(startId, edgeMap, nodeMap) {
   const path    = [startId];
   const visited = new Set([startId]);
   let   cur     = startId;
   while (edgeMap.has(cur)) {
-    const next = edgeMap.get(cur).find(n => !visited.has(n));
-    if (!next) break;
+    const edgeList = edgeMap.get(cur);
+    let   next;
+
+    if (edgeList.length > 1) {
+      // Branching point: pick the edge whose branch matches the condition result.
+      const curNode = nodeMap ? nodeMap.get(cur) : null;
+      const result  = curNode?._op?.result;
+      const target  = edgeList.find(e => e.branch === (result ? 'true' : 'false'));
+      next = target?.to;
+    } else {
+      const e = edgeList.find(e => !visited.has(e.to));
+      next = e?.to;
+    }
+
+    if (!next || visited.has(next)) break;
     visited.add(next);
     path.push(next);
     cur = next;
@@ -1081,17 +1289,32 @@ function startFlowGraph(steps, sourceCode = '') {
   stopFlowAnimation();
   fgTitleEl.textContent = 'Flow Graph';
 
-  const graph = buildFlowGraph(steps, sourceCode);
+  try {
+    console.log('[FG] startFlowGraph — steps:', steps?.length, '| code:', sourceCode?.slice(0,40));
+    const graph = buildFlowGraph(steps, sourceCode);
+    console.log('[FG] graph — nodes:', graph.nodes.length, '| tokens:', graph.tokens.length, '| edges:', graph.edges.length);
+    if (graph.nodes.length > 0) {
+      console.log('[FG] nodes:', graph.nodes.map(n => `${n.id}(${n.type}@${n.x},${n.y})`).join(' → '));
+      console.log('[FG] tokens:', graph.tokens.map(t => `${t.id}[${t.startNodeId}→${t.consoleNodeId}] lines=${JSON.stringify(t.consoleLines)}`).join(', '));
+    }
 
-  if (graph.nodes.length === 0) {
+    if (graph.nodes.length === 0) {
+      fgNodesEl.innerHTML = `
+        <div class="fg-empty">
+          Граф не удалось построить для этого кода.<br>
+          Попробуй: <code style="color:#93C5FD">x = 5<br>print(x)</code>
+        </div>`;
+      return;
+    }
+
+    renderFlowGraph(graph);
+    setTimeout(() => startFlowAnimation(graph), 360);
+  } catch (err) {
+    console.error('[FlowGraph]', err);
     fgNodesEl.innerHTML = `
-      <div class="fg-empty">
-        Граф не удалось построить для этого кода.<br>
-        Попробуй: <code style="color:#93C5FD">x = 5<br>print(x)</code>
+      <div class="fg-empty" style="color:#F87171">
+        Ошибка построения графа: ${err.message || err}<br>
+        <small style="opacity:0.6">Подробности в консоли браузера (F12)</small>
       </div>`;
-    return;
   }
-
-  renderFlowGraph(graph);
-  setTimeout(() => startFlowAnimation(graph), 360);
 }

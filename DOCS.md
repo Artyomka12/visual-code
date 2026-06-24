@@ -354,22 +354,54 @@ if x > 3:
 
 **Поддерживаемые операнды:** переменная OP константа, переменная OP переменная.
 
-**Поведение:**
+**Поведение (if без else):**
 
 - **TRUE** — токен продолжает движение к следующему узлу (PRINT → CONSOLE).
 - **FALSE** — токен растворяется на ConditionNode; Console не обновляется.
 
-**Граф для TRUE:**
+**Граф для `if` без `else` (TRUE):**
 ```
 ASSIGN(x=5) → CONDITION(x > 3) → PRINT(x) → CONSOLE
 ```
 
-**Граф для FALSE:**
+**Граф для `if` без `else` (FALSE):**
 ```
 ASSIGN(x=2) → CONDITION(x > 3)   ← токен останавливается здесь
 ```
 
-**MVP ограничения:** поддерживается только `print(var)` в теле `if`. `else`, вложенные условия, несколько операций в теле — не поддерживаются.
+---
+
+#### ConditionNode с else (Y-split)
+
+**Поведение (if / else):**
+
+Когда у `if` есть соответствующий `else`, граф строится с раздвоением — Y-split:
+
+- TRUE-ветка — PrintNode **выше** центра, ребро зелёного цвета с меткой `TRUE`.
+- FALSE-ветка — PrintNode **ниже** центра, ребро красного цвета с меткой `FALSE`.
+- Обе ветки сходятся в ConsoleNode.
+
+**Пример кода:**
+```python
+x = 5
+if x > 3:
+    print(x)
+else:
+    print(0)
+```
+
+**Схема графа:**
+```
+                   TRUE ──→ PRINT(x)  ──┐
+ASSIGN(x=5) → IF(x>3)                   ├──→ CONSOLE
+                   FALSE ──→ PRINT(0) ──┘
+```
+
+**Для x = 5 (TRUE):** токен идёт ASSIGN → IF → PRINT(x) → CONSOLE → Console: `5`
+
+**Для x = 2 (FALSE):** токен идёт ASSIGN → IF → PRINT(0) → CONSOLE → Console: `0`
+
+**MVP ограничения:** в каждой ветке поддерживается только `print(…)`. `elif`, вложенные условия, несколько операций в теле — не поддерживаются. `else` внутри `for`-цикла — не поддерживается.
 
 ---
 
@@ -508,6 +540,28 @@ for i in range(5):
 Граф: `LOOP(i:0→5) → CONDITION(i > 2) → PRINT(i) → CONSOLE`
 5 токенов: `i=0,1,2` — растворяются на CONDITION (FALSE); `i=3,4` — проходят к PRINT → CONSOLE → консоль: `3`, `4`
 
+**Условие с else (TRUE):**
+```python
+x = 5
+if x > 3:
+    print(x)
+else:
+    print(0)
+```
+Граф: `ASSIGN(x=5) → CONDITION(x>3) →[TRUE]→ PRINT(x) → CONSOLE`
+Токен идёт по зелёной ветке → консоль: `5`
+
+**Условие с else (FALSE):**
+```python
+x = 2
+if x > 3:
+    print(x)
+else:
+    print(0)
+```
+Граф: `ASSIGN(x=2) → CONDITION(x>3) →[FALSE]→ PRINT(0) → CONSOLE`
+Токен идёт по красной ветке → консоль: `0`
+
 ---
 
 ### Flow Graph Status
@@ -529,10 +583,11 @@ for i in range(5):
 - ✓ Подсветка текущей итерации на LoopNode
 - ✓ ConditionNode (`if VAR OP OPERAND:` + `print(var)` в теле)
 - ✓ LoopNode + ConditionNode (`for VAR in range(N): if VAR OP CONST: print(VAR)`)
+- ✓ ConditionNode + else — Y-split граф: TRUE-ветка зелёная (выше), FALSE-ветка красная (ниже)
 
 **Планируется:**
 
-- ConditionNode: `else`, `elif`, вложенные условия
+- ConditionNode: `elif`, вложенные условия, `else` внутри цикла
 - FunctionNode (`def` + вызов)
 - Вложенные циклы
 - Массивы и коллекции внутри тела цикла
@@ -1148,6 +1203,23 @@ const FG_NODE_TYPES = {
 ---
 
 ## Release Notes
+
+### v1.3.2
+
+**ConditionNode + else (Y-split)**
+
+- Добавлена поддержка `if … else: print(…)` в Flow Graph View.
+- Граф строится с Y-раздвоением (Y-split): PrintNode TRUE-ветки расположен выше центра, PrintNode FALSE-ветки — ниже, оба сходятся в ConsoleNode.
+- Рёбра ветвления окрашены: **зелёное** (`#16A34A`) для TRUE, **красное** (`#B91C1C`) для FALSE; метки `TRUE` / `FALSE` расположены на рёбрах в SVG.
+- Три новых arrow marker-а в SVG defs (default, true, false) для корректных цветных наконечников.
+- Детектирование в `parseOps`: pre-scan находит `else:` и связывает с соответствующим `if` по отступу; строятся обратные карты `ifBodyLineOfElse` и `elseBodyLineToIfLine`. Вывод из веток не эмитирует отдельные print-опы, а прикрепляется к condition-оп через `_trueText` / `_falseText`.
+- Post-pass вставляет пару print-опов с `branch: 'true' | 'false'` после condition-оп.
+- `buildNodes`: branch-узлы позиционируются по Y (±`FG_BRANCH_Y = 70`), X разделяют на одной колонке (true-узел не двигает curX).
+- `buildEdges`: Y-split pattern — два ребра из CONDITION (true/false) + два ребра обратно в CONSOLE.
+- `buildEdgeMap` теперь хранит `{to, branch}` объекты.
+- `tracePath` выбирает ветку по `node._op.result` при наличии нескольких рёбер.
+- `animateCondition`: при `op.hasElse` всегда продолжает ход токена (нет растворения для FALSE).
+- Все 8 существующих Flow Graph сценариев не затронуты. Проверено 12/12 сценариев.
 
 ### v1.3.1
 
