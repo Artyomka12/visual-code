@@ -1,13 +1,14 @@
 /* ===== Flow Graph — Experimental Mode ===== */
 
 /* --- Layout constants (JS source of truth; CSS mirrors these) --- */
-const FG_NODE_W    = 160;
-const FG_NODE_H    = 80;
-const FG_GAP_X     = 60;
-const FG_CENTER_Y  = 130;
-const FG_BRANCH_Y  = 70;   // vertical offset for if/else branch nodes above/below centre
-const FG_TOKEN_W   = 100;
-const FG_TOKEN_H   = 32;
+const FG_NODE_W     = 160;
+const FG_NODE_H     = 80;
+const FG_COND_H     = 96;    // diamond condition node is taller than standard
+const FG_GAP_Y      = 52;    // vertical gap between nodes (top-to-bottom flow)
+const FG_MARGIN_TOP = 36;    // canvas top padding before first node
+const FG_BRANCH_X   = 30;    // gap from center-column to branch node left/right edge
+const FG_TOKEN_W    = 100;
+const FG_TOKEN_H    = 30;
 
 /* ===================================================
    Node type registry
@@ -36,8 +37,8 @@ const FG_NODE_TYPES = {
     makeLabel: (_op) => '', // content filled at runtime by revealConsole()
   },
   loop: {
-    typeLabel: 'LOOP',
-    makeLabel: (op) => `${op.variable} : ${op.start} → ${op.end}`,
+    typeLabel: 'FOR',
+    makeLabel: (op) => `${op.variable} in range(${op.end})`,
   },
   condition: {
     typeLabel: 'IF',
@@ -89,7 +90,7 @@ const FOR_RANGE_RE     = /^for\s+(\w+)\s+in\s+range\s*\(\s*(\d+)\s*\)\s*:/;
 const IF_COND_RE       = /^if\s+(\w+|\d+\.?\d*)\s*(>=|<=|!=|==|>|<)\s*(\w+|\d+\.?\d*)\s*:/;
 
 /* ===== DOM refs ===== */
-const fgView    = document.getElementById('flow-graph-view');
+// fgView declared in editor.js (loaded first) — reuse that global
 const fgCanvas  = document.getElementById('fg-canvas-wrap');
 const fgNodesEl = document.getElementById('fg-nodes');
 const fgArrowEl = document.getElementById('fg-arrows');
@@ -422,44 +423,52 @@ function parseOps(steps, sourceLines = []) {
    =================================================== */
 function buildNodes(expandedOps, canvasW) {
   const hasPrints = expandedOps.some(o => o.type === 'print');
-  // Branch pairs (true+false) share one X column, so subtract one slot per true-branch node.
-  const branchTrueCount = expandedOps.filter(o => o.branch === 'true').length;
-  const totalCount      = expandedOps.length - branchTrueCount + (hasPrints ? 1 : 0);
-
-  const totalW = totalCount * FG_NODE_W + Math.max(0, totalCount - 1) * FG_GAP_X;
-  let curX     = Math.max(40, Math.round((canvasW - totalW) / 2));
-
-  const nodes = [];
+  // Center the main column in the canvas; leave enough room for branch nodes on both sides.
+  const centerX = Math.max(FG_NODE_W + FG_BRANCH_X + 20, Math.round(canvasW / 2));
+  let curY      = FG_MARGIN_TOP;
+  const nodes   = [];
 
   expandedOps.forEach((op, i) => {
     const typeDef = FG_NODE_TYPES[op.type] || FG_NODE_TYPES.assignment;
+    const nodeH   = (op.type === 'condition') ? FG_COND_H : FG_NODE_H;
+    let   nodeX;
+    const nodeY = curY;
 
-    // Branch nodes are offset vertically to create the Y-split visual.
-    let nodeY = FG_CENTER_Y;
-    if (op.branch === 'true')  nodeY = FG_CENTER_Y - FG_BRANCH_Y;
-    if (op.branch === 'false') nodeY = FG_CENTER_Y + FG_BRANCH_Y;
+    if (op.branch === 'true') {
+      // Left branch — same Y row as the upcoming false branch; don't advance curY yet.
+      nodeX = centerX - FG_NODE_W - FG_BRANCH_X;
+    } else if (op.branch === 'false') {
+      // Right branch — same Y row; advance curY after placing it.
+      nodeX = centerX + FG_BRANCH_X;
+      curY += nodeH + FG_GAP_Y;
+    } else {
+      // Main column node.
+      nodeX = centerX - Math.round(FG_NODE_W / 2);
+      curY += nodeH + FG_GAP_Y;
+    }
 
     nodes.push({
-      id:    `node_${i}`,
-      type:  op.type,
-      label: typeDef.makeLabel(op),
-      x:     curX,
-      y:     nodeY,
-      _op:   op,
+      id:     `node_${i}`,
+      type:   op.type,
+      label:  typeDef.makeLabel(op),
+      x:      nodeX,
+      y:      nodeY,
+      width:  FG_NODE_W,
+      height: nodeH,
+      _op:    op,
     });
-
-    // True-branch shares the X column with the following false-branch → don't advance curX.
-    if (op.branch !== 'true') curX += FG_NODE_W + FG_GAP_X;
   });
 
   if (hasPrints) {
     nodes.push({
-      id:    'node_console',
-      type:  'console',
-      label: '',
-      x:     curX,
-      y:     FG_CENTER_Y,
-      _op:   { type: 'console' },
+      id:     'node_console',
+      type:   'console',
+      label:  '',
+      x:      centerX - Math.round(FG_NODE_W / 2),
+      y:      curY,
+      width:  FG_NODE_W,
+      height: FG_NODE_H,
+      _op:    { type: 'console' },
     });
   }
 
@@ -620,7 +629,10 @@ function expandLoopBodyOps(ops) {
   for (const op of ops) {
     result.push(op);
     if (op.type === 'loop' && op.bodyOps && op.bodyOps.length > 0) {
-      for (const bodyOp of op.bodyOps) result.push(bodyOp);
+      for (const bodyOp of op.bodyOps) {
+        bodyOp._isLoopBody = true;  // mutate in place — preserves opToNodeId reference
+        result.push(bodyOp);
+      }
     }
   }
   return result;
@@ -666,12 +678,12 @@ function renderFlowGraph(graph) {
 
   const { nodes, edges } = graph;
 
-  // Expand canvas to fit content (allows scroll when needed)
+  // Expand canvas to fit all nodes (vertical layout — height drives scroll).
   if (nodes.length > 0) {
-    const maxR = Math.max(...nodes.map(n => n.x + FG_NODE_W)) + 60;
-    const maxB = Math.max(...nodes.map(n => n.y + FG_NODE_H)) + 100;
-    fgCanvas.style.minWidth  = maxR + 'px';
-    fgCanvas.style.minHeight = Math.max(340, maxB) + 'px';
+    const maxR = Math.max(...nodes.map(n => n.x + (n.width  || FG_NODE_W))) + 60;
+    const maxB = Math.max(...nodes.map(n => n.y + (n.height || FG_NODE_H))) + 100;
+    fgCanvas.style.minWidth  = Math.max(440, maxR) + 'px';
+    fgCanvas.style.minHeight = Math.max(400, maxB) + 'px';
   }
 
   /* --- Nodes --- */
@@ -684,19 +696,41 @@ function renderFlowGraph(graph) {
     el.className = `fg-node fg-node--${node.type}`;
     el.id = `fn-${node.id}`;
     // Sizes driven by JS constants (CSS has matching defaults)
-    el.style.left   = node.x   + 'px';
-    el.style.top    = node.y   + 'px';
-    el.style.width  = FG_NODE_W + 'px';
+    el.style.left   = node.x + 'px';
+    el.style.top    = node.y + 'px';
+    el.style.width  = (node.width  || FG_NODE_W) + 'px';
+    if (node.height && node.height !== FG_NODE_H) el.style.height = node.height + 'px';
 
-    el.innerHTML = `
-      <div class="fg-node-header">
-        <span class="fg-node-type">${typeDef.typeLabel}</span>
-        <span class="fg-node-dot" style="background:${c.pulse}"></span>
-      </div>
-      <div class="fg-node-label${isConsole ? ' fg-console-output' : ''}"
-           ${isConsole ? 'style="opacity:0"' : ''}>
-        ${isConsole ? '' : fgEsc(node.label)}
-      </div>`;
+    if (node.type === 'condition') {
+      const w  = node.width  || FG_NODE_W;
+      const h  = node.height || FG_COND_H;
+      const hw = Math.round(w / 2);
+      const hh = Math.round(h / 2);
+      el.style.background = 'transparent';
+      el.style.border     = 'none';
+      el.style.boxShadow  = 'none';
+      el.style.overflow   = 'visible';
+      el.style.padding    = '0';
+      el.innerHTML = `
+        <svg class="fg-cond-diamond" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
+          <polygon points="${hw},4 ${w-4},${hh} ${hw},${h-4} 4,${hh}"
+                   fill="#1A0E00" stroke="#B45309" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+        <div class="fg-cond-inner">
+          <span class="fg-node-type">${typeDef.typeLabel}</span>
+          <div class="fg-node-label">${fgEsc(node.label)}</div>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="fg-node-header">
+          <span class="fg-node-type">${typeDef.typeLabel}</span>
+          <span class="fg-node-dot" style="background:${c.pulse}"></span>
+        </div>
+        <div class="fg-node-label${isConsole ? ' fg-console-output' : ''}"
+             ${isConsole ? 'style="opacity:0"' : ''}>
+          ${isConsole ? '' : fgEsc(node.label)}
+        </div>`;
+    }
 
     fgNodesEl.appendChild(el);
     fgNodeReg.set(node.id, { el, node });
@@ -727,6 +761,9 @@ function renderFlowGraph(graph) {
     </marker>
     <marker id="fga-head-false" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
       <polygon points="0 0,9 3.5,0 7" fill="#B91C1C"/>
+    </marker>
+    <marker id="fga-head-loop"  markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto">
+      <polygon points="9 0,0 3.5,9 7" fill="#06B6D4"/>
     </marker>`;
   fgArrowEl.appendChild(defs);
 
@@ -748,12 +785,15 @@ function renderFlowGraph(graph) {
                       : isFalseBranch ? 'fga-head-false'
                       : 'fga-head';
 
-    const x1 = fn.x + FG_NODE_W;
-    const y1 = fn.y + FG_NODE_H / 2;
-    const x2 = tn.x;
-    const y2 = tn.y + FG_NODE_H / 2;
-    const mx = (x1 + x2) / 2;
-    const d  = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    // Vertical flow: bottom-centre of source → top-centre of target.
+    const fnH = fn.height || FG_NODE_H;
+    const tnH = tn.height || FG_NODE_H;
+    const x1  = Math.round(fn.x + (fn.width || FG_NODE_W) / 2);
+    const y1  = fn.y + fnH;
+    const x2  = Math.round(tn.x + (tn.width || FG_NODE_W) / 2);
+    const y2  = tn.y;
+    const my  = Math.round((y1 + y2) / 2);
+    const d   = `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
 
     // Glow layer
     const glow = document.createElementNS(svgNS, 'path');
@@ -776,8 +816,9 @@ function renderFlowGraph(graph) {
 
     // Branch edge labels (TRUE / FALSE)
     if (isTrueBranch || isFalseBranch) {
-      const labelX = (x1 + mx) / 2;         // roughly 1/4 along the curve
-      const labelY = (y1 + y2) / 2 - 5;
+      // Label near midpoint, offset left/right to avoid overlapping the bezier.
+      const labelX = Math.round((x1 + x2) / 2) + (isTrueBranch ? -14 : 14);
+      const labelY = Math.round((y1 + y2) / 2);
       const text = document.createElementNS(svgNS, 'text');
       text.setAttribute('x', String(Math.round(labelX)));
       text.setAttribute('y', String(Math.round(labelY)));
@@ -790,6 +831,46 @@ function renderFlowGraph(graph) {
       text.textContent = isTrueBranch ? 'TRUE' : 'FALSE';
       fgArrowEl.appendChild(text);
     }
+  }
+
+  // Loop back-arrows: right-side arc from body node back to LOOP node.
+  for (let i = 0; i < nodes.length - 1; i++) {
+    const loopNode = nodes[i];
+    if (loopNode.type !== 'loop') continue;
+    const bodyNode = nodes[i + 1];
+    const isBodyNode = bodyNode._op && (bodyNode._op._isLoopBody || bodyNode._op.isLoopBody);
+    if (!isBodyNode) continue;
+
+    const lW   = loopNode.width  || FG_NODE_W;
+    const lH   = loopNode.height || FG_NODE_H;
+    const bW   = bodyNode.width  || FG_NODE_W;
+    const bH   = bodyNode.height || FG_NODE_H;
+    const arcX = Math.max(loopNode.x + lW, bodyNode.x + bW) + 28;
+
+    // Start at right-centre of body node, end at right-centre of loop node.
+    const x1 = loopNode.x + lW;
+    const y1 = Math.round(loopNode.y + lH / 2);
+    const x2 = bodyNode.x + bW;
+    const y2 = Math.round(bodyNode.y + bH / 2);
+    const d  = `M${x2},${y2} C${arcX},${y2} ${arcX},${y1} ${x1},${y1}`;
+
+    const glow = document.createElementNS(svgNS, 'path');
+    glow.setAttribute('d', d);
+    glow.setAttribute('stroke', '#06B6D4');
+    glow.setAttribute('stroke-width', '5');
+    glow.setAttribute('stroke-opacity', '0.14');
+    glow.setAttribute('fill', 'none');
+    fgArrowEl.appendChild(glow);
+
+    const arc = document.createElementNS(svgNS, 'path');
+    arc.setAttribute('d', d);
+    arc.setAttribute('stroke', '#0E7490');
+    arc.setAttribute('stroke-width', '1.5');
+    arc.setAttribute('stroke-opacity', '0.70');
+    arc.setAttribute('stroke-dasharray', '5 4');
+    arc.setAttribute('fill', 'none');
+    arc.setAttribute('marker-end', 'url(#fga-head-loop)');
+    fgArrowEl.appendChild(arc);
   }
 }
 
@@ -805,6 +886,22 @@ function litNode(nodeId) {
   const entry = fgNodeReg.get(nodeId);
   if (!entry) return;
   const c = fgColors(entry.node.type);
+  if (entry.node.type === 'condition') {
+    // Diamond node: apply glow via SVG polygon filter instead of boxShadow.
+    const poly = entry.el.querySelector('.fg-cond-diamond polygon');
+    if (poly) {
+      gsap.killTweensOf(poly, 'attr');
+      gsap.to(poly, {
+        attr: { 'stroke-width': 2.5 },
+        filter: `drop-shadow(0 0 8px ${c.pulse})`,
+        duration: 0.18, ease: 'power2.out',
+        onComplete: () => {
+          gsap.to(poly, { attr: { 'stroke-width': 1.5 }, filter: 'none', duration: 0.65, ease: 'power2.in' });
+        },
+      });
+    }
+    return;
+  }
   gsap.killTweensOf(entry.el, 'boxShadow');
   gsap.to(entry.el, {
     boxShadow: `0 0 0 2px ${c.border}, 0 0 22px ${c.glow}, 0 0 48px ${c.outer}`,
@@ -823,13 +920,14 @@ function pulseNode(nodeId) {
   if (!entry) return;
   const c = fgColors(entry.node.type);
 
+  const node  = entry.node;
   const pulse = document.createElement('div');
   pulse.className = 'fg-pulse';
   Object.assign(pulse.style, {
-    left:        entry.node.x + 'px',
-    top:         entry.node.y + 'px',
-    width:       FG_NODE_W + 'px',
-    height:      FG_NODE_H + 'px',
+    left:        node.x + 'px',
+    top:         node.y + 'px',
+    width:       (node.width  || FG_NODE_W) + 'px',
+    height:      (node.height || FG_NODE_H) + 'px',
     borderColor: c.pulse,
   });
   fgNodesEl.appendChild(pulse);
@@ -920,7 +1018,7 @@ function animateLoopIterations(el, loopNode, path, nodeMap, curIdx, token, onCom
         gsap.to(el, {
           scale: 0.72, duration: 0.16, ease: 'power2.in',
           onComplete: () => {
-            el.textContent = `[ ${newLabel} ]`;
+            el.textContent = newLabel;
             token.currentVar = bodyOp.target;
 
             // Bounce back to full size
@@ -1022,8 +1120,8 @@ function highlightLoopIteration(nodeId, iterVal) {
   if (!labelEl) return;
   const op = entry.node._op;
   labelEl.innerHTML =
-    `<span class="fg-loop-range">${fgEsc(op.variable)} : ${op.start} → ${op.end}</span>` +
-    `<br><span class="fg-loop-iter">= ${iterVal}</span>`;
+    `<span class="fg-loop-range">${fgEsc(op.variable)} in range(${op.end})</span>` +
+    `<br><span class="fg-loop-iter">${fgEsc(op.variable)} = ${iterVal}</span>`;
 }
 
 /* ===================================================
@@ -1055,7 +1153,7 @@ function launchToken(token, nodeMap, edgeMap, onComplete) {
 
   const el = document.createElement('div');
   el.className   = 'data-token';
-  el.textContent = `[ ${token.label} ]`;
+  el.textContent = token.label;
   Object.assign(el.style, {
     left:    tokenLeft(startNode) + 'px',
     top:     tokenTop(startNode)  + 'px',
@@ -1179,7 +1277,7 @@ function transformAtCompute(el, computeNode, path, nodeMap, curIdx, token, onCom
       scale: 0.72, duration: 0.16, ease: 'power2.in',
       onComplete: () => {
         // Swap the text while squished (the swap is invisible at small scale)
-        el.textContent = `[ ${newLabel} ]`;
+        el.textContent = newLabel;
         token.currentVar = op.target; // stays the same, but explicit is clearer
 
         // Bounce back to full size
@@ -1207,7 +1305,7 @@ function transformAtCompute(el, computeNode, path, nodeMap, curIdx, token, onCom
 
         const newEl = document.createElement('div');
         newEl.className   = 'data-token';
-        newEl.textContent = `[ ${newLabel} ]`;
+        newEl.textContent = newLabel;
         Object.assign(newEl.style, {
           left:    tokenLeft(computeNode) + 'px',
           top:     tokenTop(computeNode)  + 'px',
@@ -1225,11 +1323,9 @@ function transformAtCompute(el, computeNode, path, nodeMap, curIdx, token, onCom
   }
 }
 
-/* Token is centered inside the node both horizontally and vertically.
-   Because all nodes share the same Y (FG_CENTER_Y), the token travels
-   horizontally — exactly along the arrow line. */
-function tokenLeft(node) { return node.x + Math.round((FG_NODE_W - FG_TOKEN_W) / 2); }
-function tokenTop(node)  { return node.y + Math.round((FG_NODE_H - FG_TOKEN_H) / 2); }
+/* Token is centered inside its node (both axes). Uses node.width/height when set. */
+function tokenLeft(node) { return node.x + Math.round(((node.width  || FG_NODE_W) - FG_TOKEN_W) / 2); }
+function tokenTop(node)  { return node.y + Math.round(((node.height || FG_NODE_H) - FG_TOKEN_H) / 2); }
 
 /* ===================================================
    Utilities

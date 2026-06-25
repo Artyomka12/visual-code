@@ -788,7 +788,7 @@ body, .card, .scope-block, .card-header, .editor-footer,
   background: #080F1C;
   border-radius: var(--radius);
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
   margin-top: 20px;
   box-shadow: 0 8px 40px rgba(0,0,0,0.5);
   border: 1px solid #192236;
@@ -907,23 +907,63 @@ body, .card, .scope-block, .card-header, .editor-footer,
 }
 .fg-node--console .fg-node-type { color: #8B5CF6; }
 
-/* Loop */
+/* Loop — distinct visual to signal iteration (left accent + top stripe) */
 .fg-node--loop {
-  background: #001520;
+  background: #001B26;
   border-color: #0E7490;
+  border-left: 3px solid #06B6D4;
   color: #A5F3FC;
 }
-.fg-node--loop .fg-node-type { color: #06B6D4; }
+.fg-node--loop .fg-node-type { color: #22D3EE; letter-spacing: 0.6px; }
 .fg-loop-range { opacity: 0.70; font-size: 12px; }
-.fg-loop-iter  { color: #67E8F9; font-weight: 600; font-size: 12px; }
+.fg-loop-iter  { color: #67E8F9; font-weight: 700; font-size: 13px; }
 
-/* Condition */
+/* Condition — diamond shape, rendered via SVG in JS */
 .fg-node--condition {
-  background: #1A0E00;
-  border-color: #B45309;
-  color: #FED7AA;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible;
+  padding: 0;
 }
-.fg-node--condition .fg-node-type { color: #F97316; }
+
+.fg-cond-diamond {
+  position: absolute;
+  top: 0; left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.fg-cond-inner {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 26px;
+  text-align: center;
+  gap: 3px;
+}
+
+.fg-cond-inner .fg-node-type {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.9px;
+  color: #F97316;
+}
+
+.fg-cond-inner .fg-node-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #FED7AA;
+  word-break: break-all;
+  line-height: 1.3;
+}
+
 .fg-cond-expr  { display: block; font-size: 11px; opacity: 0.70; margin-bottom: 2px; }
 .fg-cond-true  { display: block; color: #4ADE80; font-weight: 700; font-size: 13px; }
 .fg-cond-false { display: block; color: #F87171; font-weight: 700; font-size: 13px; }
@@ -939,21 +979,19 @@ body, .card, .scope-block, .card-header, .editor-footer,
   transform-origin: center;
 }
 
-/* ===== DataToken — capsule ===== */
+/* ===== DataToken — variable badge ===== */
 .data-token {
   position: absolute;
-  background: #0E1929;
-  color: #C8DCFA;
+  background: rgba(37,99,235,0.16);
+  color: #93C5FD;
   font-family: var(--mono);
-  font-size: 13px;
-  font-weight: 600;
-  padding: 7px 18px;
-  border-radius: 22px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 4px 12px;
+  border-radius: 8px;
   white-space: nowrap;
-  border: 1px solid rgba(91,141,239,0.55);
-  box-shadow:
-    0 2px 14px rgba(45,92,184,0.40),
-    0 0 0 1px rgba(79,126,247,0.12) inset;
+  border: 1px solid rgba(99,155,241,0.45);
   pointer-events: none;
   transform-origin: center;
 }
