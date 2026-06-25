@@ -875,13 +875,23 @@ body, .card, .scope-block, .card-header, .editor-footer,
   word-break: break-all;
 }
 
-/* Assignment */
+/* Assignment — parallelogram via SVG */
 .fg-node--assignment {
-  background: #0E1929;
-  border-color: #2D5CB8;
-  color: #BDD0F5;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible;
+  padding: 0;
 }
-.fg-node--assignment .fg-node-type { color: #5B8DEF; }
+.fg-para-svg { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.fg-para-inner {
+  position: relative; z-index: 1;
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 0 22px; text-align: center; gap: 3px;
+}
+.fg-para-inner .fg-node-type { font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 0.9px; color: #7BA8F7; }
+.fg-para-inner .fg-node-label { font-family: var(--mono); font-size: 13px; color: #BFDBFE; }
 
 /* Compute */
 .fg-node--compute {
@@ -907,15 +917,24 @@ body, .card, .scope-block, .card-header, .editor-footer,
 }
 .fg-node--console .fg-node-type { color: #8B5CF6; }
 
-/* Loop — distinct visual to signal iteration (left accent + top stripe) */
+/* Loop — hexagon via SVG */
 .fg-node--loop {
-  background: #001B26;
-  border-color: #0E7490;
-  border-left: 3px solid #06B6D4;
-  color: #A5F3FC;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  overflow: visible;
+  padding: 0;
 }
-.fg-node--loop .fg-node-type { color: #22D3EE; letter-spacing: 0.6px; }
-.fg-loop-range { opacity: 0.70; font-size: 12px; }
+.fg-hex-svg { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.fg-hex-inner {
+  position: relative; z-index: 1;
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 0 28px; text-align: center; gap: 3px;
+}
+.fg-hex-inner .fg-node-type { font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 0.9px; color: #22D3EE; }
+.fg-hex-inner .fg-node-label { font-family: var(--mono); font-size: 12px; color: #A5F3FC; }
+.fg-loop-range { opacity: 0.70; font-size: 11px; }
 .fg-loop-iter  { color: #67E8F9; font-weight: 700; font-size: 13px; }
 
 /* Condition — diamond shape, rendered via SVG in JS */

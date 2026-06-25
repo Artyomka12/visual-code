@@ -313,7 +313,10 @@ function parseOps(steps, sourceLines = []) {
     const newLines = output.slice(prevOutput.length);
     for (const lineText of newLines) {
       const matchEntry = Object.entries(vars).find(([, v]) => String(v) === lineText);
-      const printLabel = matchEntry ? `print(${matchEntry[0]})` : 'print(…)';
+      // For string literals (no matching variable), use the actual source line as the label.
+      const printLabel = matchEntry
+        ? `print(${matchEntry[0]})`
+        : (/^print\s*\(/.test(sourceLine) ? sourceLine : 'print(…)');
 
       if (matchEntry && loopInfo[matchEntry[0]]) {
         // Print of a loop variable — accumulate in the loop op; don't emit a separate op.
@@ -434,12 +437,19 @@ function buildNodes(expandedOps, canvasW) {
     let   nodeX;
     const nodeY = curY;
 
+    const prevOp = i > 0 ? expandedOps[i - 1] : null;
+    const isLoopTrueBranch = op.isLoopBody && prevOp && prevOp.isLoopBodyCond;
+
     if (op.branch === 'true') {
       // Left branch — same Y row as the upcoming false branch; don't advance curY yet.
       nodeX = centerX - FG_NODE_W - FG_BRANCH_X;
     } else if (op.branch === 'false') {
       // Right branch — same Y row; advance curY after placing it.
       nodeX = centerX + FG_BRANCH_X;
+      curY += nodeH + FG_GAP_Y;
+    } else if (isLoopTrueBranch) {
+      // Print inside loop body after an if-condition: goes LEFT (true path in flowchart).
+      nodeX = centerX - FG_NODE_W - FG_BRANCH_X;
       curY += nodeH + FG_GAP_Y;
     } else {
       // Main column node.
@@ -541,10 +551,11 @@ function buildTokens(ops, nodes) {
     else if (op.type === 'print' && op.text != null) allPrintTexts.push(op.text);
   }
 
-  const assignCount   = ops.filter(o => o.type === 'assignment').length;
-  let tokenIdx        = 0;
-  let printIdx        = 0;
-  let loopPrintOffset = 0;
+  const assignCount       = ops.filter(o => o.type === 'assignment').length;
+  let tokenIdx            = 0;
+  let printIdx            = 0;
+  let loopPrintOffset     = 0;
+  let standalonePrintIdx  = 0; // counts post-loop standalone prints (no assignment to carry them)
 
   ops.forEach((op, i) => {
     const startNodeId = opToNodeId.get(op) || `node_${i}`;
@@ -616,6 +627,23 @@ function buildTokens(ops, nodes) {
     }
     // Loops with bodyOps (no outputs) don't generate their own tokens;
     // the preceding assignment token travels through the loop node.
+
+    // Standalone print ops after a loop (no assignment token to carry their output).
+    else if (op.type === 'print' && !op.isLoopBody && !op.branch) {
+      if (assignCount > 0) return; // assignment token already carries all prints
+      const nodeId = opToNodeId.get(op);
+      if (!nodeId) return;
+      // consoleLines = all loop outputs + this standalone print and any before it
+      const consoleLines = allPrintTexts.slice(0, loopPrintOffset + standalonePrintIdx + 1);
+      standalonePrintIdx++;
+      tokens.push({
+        id:            `tok_print_${i}`,
+        label:         op.label || 'print(…)',
+        startNodeId:   nodeId,
+        consoleNodeId: consoleId,
+        consoleLines,
+      });
+    }
   });
 
   return tokens;
@@ -701,7 +729,46 @@ function renderFlowGraph(graph) {
     el.style.width  = (node.width  || FG_NODE_W) + 'px';
     if (node.height && node.height !== FG_NODE_H) el.style.height = node.height + 'px';
 
-    if (node.type === 'condition') {
+    if (node.type === 'loop') {
+      // Hexagon shape for FOR loops (visually signals iteration)
+      const w   = node.width  || FG_NODE_W;
+      const h   = node.height || FG_NODE_H;
+      const cut = Math.round(w * 0.15); // corner cut: ~24px at 160w
+      const hh  = Math.round(h / 2);
+      el.style.background = 'transparent';
+      el.style.border     = 'none';
+      el.style.boxShadow  = 'none';
+      el.style.overflow   = 'visible';
+      el.style.padding    = '0';
+      el.innerHTML = `
+        <svg class="fg-hex-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
+          <polygon points="${cut},4 ${w-cut},4 ${w-4},${hh} ${w-cut},${h-4} ${cut},${h-4} 4,${hh}"
+                   fill="#001B26" stroke="#06B6D4" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+        <div class="fg-hex-inner">
+          <span class="fg-node-type">${typeDef.typeLabel}</span>
+          <div class="fg-node-label">${fgEsc(node.label)}</div>
+        </div>`;
+    } else if (node.type === 'assignment') {
+      // Parallelogram shape for variable assignments (classic flowchart I/O)
+      const w  = node.width  || FG_NODE_W;
+      const h  = node.height || FG_NODE_H;
+      const sk = 14; // horizontal skew in px
+      el.style.background = 'transparent';
+      el.style.border     = 'none';
+      el.style.boxShadow  = 'none';
+      el.style.overflow   = 'visible';
+      el.style.padding    = '0';
+      el.innerHTML = `
+        <svg class="fg-para-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
+          <polygon points="${sk},4 ${w-4},4 ${w-sk-4},${h-4} 4,${h-4}"
+                   fill="#0D1B3E" stroke="#2D5CB8" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+        <div class="fg-para-inner">
+          <span class="fg-node-type">${typeDef.typeLabel}</span>
+          <div class="fg-node-label">${fgEsc(node.label)}</div>
+        </div>`;
+    } else if (node.type === 'condition') {
       const w  = node.width  || FG_NODE_W;
       const h  = node.height || FG_COND_H;
       const hw = Math.round(w / 2);
@@ -762,15 +829,26 @@ function renderFlowGraph(graph) {
     <marker id="fga-head-false" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
       <polygon points="0 0,9 3.5,0 7" fill="#B91C1C"/>
     </marker>
-    <marker id="fga-head-loop"  markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto">
+    <marker id="fga-head-loop"  markerWidth="9" markerHeight="7" refX="1"  refY="3.5" orient="auto">
       <polygon points="9 0,0 3.5,9 7" fill="#06B6D4"/>
+    </marker>
+    <marker id="fga-head-loop-right" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <polygon points="0 0,9 3.5,0 7" fill="#06B6D4"/>
     </marker>`;
   fgArrowEl.appendChild(defs);
+
+  // Edges that are replaced by the loop exit-arc are skipped visually.
+  function isBodyFlag(n) {
+    return n._op && (n._op._isLoopBody || n._op.isLoopBody || n._op.isLoopBodyCond);
+  }
 
   for (const edge of edges) {
     const fn = nodeMap.get(edge.from);
     const tn = nodeMap.get(edge.to);
     if (!fn || !tn) continue;
+
+    // Suppress edges from body nodes to post-loop nodes — exit-arc handles them visually.
+    if (isBodyFlag(fn) && !isBodyFlag(tn) && tn.type !== 'loop') continue;
 
     const isTrueBranch  = edge.branch === 'true';
     const isFalseBranch = edge.branch === 'false';
@@ -814,9 +892,11 @@ function renderFlowGraph(graph) {
     line.setAttribute('marker-end', `url(#${markerId})`);
     fgArrowEl.appendChild(line);
 
-    // Branch edge labels (TRUE / FALSE)
+    // Branch edge labels (TRUE / FALSE for if-else, Да for loop→body)
+    const isLoopBodyEdge = fn.type === 'loop' &&
+      tn._op && (tn._op._isLoopBody || tn._op.isLoopBody || tn._op.isLoopBodyCond);
+
     if (isTrueBranch || isFalseBranch) {
-      // Label near midpoint, offset left/right to avoid overlapping the bezier.
       const labelX = Math.round((x1 + x2) / 2) + (isTrueBranch ? -14 : 14);
       const labelY = Math.round((y1 + y2) / 2);
       const text = document.createElementNS(svgNS, 'text');
@@ -828,49 +908,129 @@ function renderFlowGraph(graph) {
       text.setAttribute('font-weight',  '700');
       text.setAttribute('text-anchor',  'middle');
       text.setAttribute('opacity',      '0.85');
-      text.textContent = isTrueBranch ? 'TRUE' : 'FALSE';
+      text.textContent = isTrueBranch ? 'Да' : 'Нет';
+      fgArrowEl.appendChild(text);
+    } else if (isLoopBodyEdge) {
+      // Label on the arrow from FOR to the first body node
+      const text = document.createElementNS(svgNS, 'text');
+      text.setAttribute('x', String(x1 + 8));
+      text.setAttribute('y', String(Math.round((y1 + y2) / 2)));
+      text.setAttribute('fill',        '#06B6D4');
+      text.setAttribute('font-size',   '10');
+      text.setAttribute('font-family', 'monospace, monospace');
+      text.setAttribute('font-weight', '700');
+      text.setAttribute('opacity',     '0.80');
+      text.textContent = 'Да';
       fgArrowEl.appendChild(text);
     }
   }
 
-  // Loop back-arrows: right-side arc from body node back to LOOP node.
-  for (let i = 0; i < nodes.length - 1; i++) {
+  // Helper: is this node a loop body node?
+  function isBodyOp(n) {
+    return n._op && (n._op._isLoopBody || n._op.isLoopBody || n._op.isLoopBodyCond);
+  }
+
+  function drawArc(svgNS, parent, d, stroke, dasharray, markerId, glowStroke) {
+    const g = document.createElementNS(svgNS, 'path');
+    g.setAttribute('d', d); g.setAttribute('stroke', glowStroke || stroke);
+    g.setAttribute('stroke-width', '5'); g.setAttribute('stroke-opacity', '0.14');
+    g.setAttribute('fill', 'none');
+    parent.appendChild(g);
+    const a = document.createElementNS(svgNS, 'path');
+    a.setAttribute('d', d); a.setAttribute('stroke', stroke);
+    a.setAttribute('stroke-width', '1.5'); a.setAttribute('stroke-opacity', '0.70');
+    a.setAttribute('fill', 'none');
+    if (dasharray) a.setAttribute('stroke-dasharray', dasharray);
+    if (markerId)  a.setAttribute('marker-end', `url(#${markerId})`);
+    parent.appendChild(a);
+    return a;
+  }
+
+  function arcLabel(svgNS, parent, x, y, text, fill, anchor) {
+    const t = document.createElementNS(svgNS, 'text');
+    t.setAttribute('x', String(x)); t.setAttribute('y', String(y));
+    t.setAttribute('fill', fill); t.setAttribute('font-size', '10');
+    t.setAttribute('font-family', 'monospace, monospace');
+    t.setAttribute('font-weight', '700');
+    t.setAttribute('text-anchor', anchor || 'middle');
+    t.setAttribute('opacity', '0.80');
+    t.textContent = text;
+    parent.appendChild(t);
+  }
+
+  // IF-inside-loop FALSE arc: from IF right port → right → up → merges with loop back-arc.
+  // Draws a visual-only dashed arc labelled "Нет" from the condition diamond back toward FOR.
+  for (let i = 0; i < nodes.length; i++) {
+    const condNode = nodes[i];
+    if (condNode.type !== 'condition') continue;
+    if (!condNode._op || !condNode._op.isLoopBodyCond) continue;
+
+    // Find the parent FOR node (the nearest loop node before this condition).
+    let forNode = null;
+    for (let j = i - 1; j >= 0; j--) {
+      if (nodes[j].type === 'loop') { forNode = nodes[j]; break; }
+    }
+    if (!forNode) continue;
+
+    const cW  = condNode.width  || FG_NODE_W;
+    const cH  = condNode.height || FG_COND_H;
+    const fW  = forNode.width   || FG_NODE_W;
+    const fH  = forNode.height  || FG_NODE_H;
+
+    // Arc: from right vertex of diamond → right → up to FOR right port,
+    // then a small jog to FOR right (visually shows "no condition → skip body → check loop again").
+    const x1  = condNode.x + cW;                      // IF right port (diamond tip)
+    const y1  = Math.round(condNode.y + cH / 2);      // IF mid-Y
+    const x2  = forNode.x + fW;                       // FOR right port
+    const y2  = Math.round(forNode.y + fH / 2);       // FOR mid-Y
+    const arc = Math.max(x1, x2) + 32;                // route right of both nodes
+    const fd  = `M${x1},${y1} C${arc},${y1} ${arc},${y2} ${x2},${y2}`;
+
+    drawArc(svgNS, fgArrowEl, fd, '#B45309', '4 3', null, '#B45309');
+    arcLabel(svgNS, fgArrowEl, arc + 6, Math.round((y1 + y2) / 2), 'Нет', '#B45309', 'start');
+  }
+
+  // Loop arcs: LEFT back-arc (Да) + RIGHT exit-arc (Нет).
+  for (let i = 0; i < nodes.length; i++) {
     const loopNode = nodes[i];
     if (loopNode.type !== 'loop') continue;
-    const bodyNode = nodes[i + 1];
-    const isBodyNode = bodyNode._op && (bodyNode._op._isLoopBody || bodyNode._op.isLoopBody);
-    if (!isBodyNode) continue;
 
-    const lW   = loopNode.width  || FG_NODE_W;
-    const lH   = loopNode.height || FG_NODE_H;
-    const bW   = bodyNode.width  || FG_NODE_W;
-    const bH   = bodyNode.height || FG_NODE_H;
-    const arcX = Math.max(loopNode.x + lW, bodyNode.x + bW) + 28;
+    const lW = loopNode.width  || FG_NODE_W;
+    const lH = loopNode.height || FG_NODE_H;
 
-    // Start at right-centre of body node, end at right-centre of loop node.
-    const x1 = loopNode.x + lW;
-    const y1 = Math.round(loopNode.y + lH / 2);
-    const x2 = bodyNode.x + bW;
-    const y2 = Math.round(bodyNode.y + bH / 2);
-    const d  = `M${x2},${y2} C${arcX},${y2} ${arcX},${y1} ${x1},${y1}`;
+    // Find last body node and first post-loop node.
+    let lastBodyIdx  = -1;
+    let firstPostIdx = nodes.length; // sentinel = no post-loop
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (isBodyOp(nodes[j])) { lastBodyIdx = j; }
+      else { firstPostIdx = j; break; }
+    }
+    if (lastBodyIdx === -1) continue; // no body nodes
 
-    const glow = document.createElementNS(svgNS, 'path');
-    glow.setAttribute('d', d);
-    glow.setAttribute('stroke', '#06B6D4');
-    glow.setAttribute('stroke-width', '5');
-    glow.setAttribute('stroke-opacity', '0.14');
-    glow.setAttribute('fill', 'none');
-    fgArrowEl.appendChild(glow);
+    // --- LEFT back-arc: last body → FOR left port ---
+    const bNode = nodes[lastBodyIdx];
+    const bH    = bNode.height || FG_NODE_H;
+    const arcXL = Math.min(loopNode.x, bNode.x) - 32;
+    const bx2   = bNode.x;
+    const by2   = Math.round(bNode.y + bH / 2);
+    const bx1   = loopNode.x;
+    const by1   = Math.round(loopNode.y + lH / 2);
+    const bd    = `M${bx2},${by2} C${arcXL},${by2} ${arcXL},${by1} ${bx1},${by1}`;
+    drawArc(svgNS, fgArrowEl, bd, '#0E7490', '5 4', 'fga-head-loop-right', '#06B6D4');
 
-    const arc = document.createElementNS(svgNS, 'path');
-    arc.setAttribute('d', d);
-    arc.setAttribute('stroke', '#0E7490');
-    arc.setAttribute('stroke-width', '1.5');
-    arc.setAttribute('stroke-opacity', '0.70');
-    arc.setAttribute('stroke-dasharray', '5 4');
-    arc.setAttribute('fill', 'none');
-    arc.setAttribute('marker-end', 'url(#fga-head-loop)');
-    fgArrowEl.appendChild(arc);
+    // --- RIGHT exit-arc: FOR right port → first post-loop node ---
+    if (firstPostIdx < nodes.length) {
+      const pNode = nodes[firstPostIdx];
+      const pW    = pNode.width  || FG_NODE_W;
+      const arcXR = loopNode.x + lW + 38;
+      const ex1   = loopNode.x + lW;
+      const ey1   = Math.round(loopNode.y + lH / 2);
+      const ex2   = Math.round(pNode.x + pW / 2);
+      const ey2   = pNode.y;
+      const ed    = `M${ex1},${ey1} C${arcXR},${ey1} ${arcXR},${ey2} ${ex2},${ey2}`;
+      drawArc(svgNS, fgArrowEl, ed, '#0E7490', '5 4', 'fga-head', '#0E7490');
+      arcLabel(svgNS, fgArrowEl, arcXR + 6, Math.round((ey1 + ey2) / 2), 'Нет', '#0E7490', 'start');
+    }
   }
 }
 
@@ -886,9 +1046,15 @@ function litNode(nodeId) {
   const entry = fgNodeReg.get(nodeId);
   if (!entry) return;
   const c = fgColors(entry.node.type);
-  if (entry.node.type === 'condition') {
-    // Diamond node: apply glow via SVG polygon filter instead of boxShadow.
-    const poly = entry.el.querySelector('.fg-cond-diamond polygon');
+  // SVG-shaped nodes: apply glow to polygon element, not boxShadow.
+  const svgSelectors = {
+    condition:  '.fg-cond-diamond polygon',
+    loop:       '.fg-hex-svg polygon',
+    assignment: '.fg-para-svg polygon',
+  };
+  const svgSel = svgSelectors[entry.node.type];
+  if (svgSel) {
+    const poly = entry.el.querySelector(svgSel);
     if (poly) {
       gsap.killTweensOf(poly, 'attr');
       gsap.to(poly, {
