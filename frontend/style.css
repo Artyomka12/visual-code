@@ -782,16 +782,24 @@ body, .card, .scope-block, .card-header, .editor-footer,
   padding: 3px 10px;
 }
 
-#fg-canvas-wrap {
-  position: relative;
-  min-height: 400px;
-  background: #080F1C;
-  border-radius: var(--radius);
-  overflow-x: auto;
-  overflow-y: auto;
+/* ===== Flow Graph main layout (canvas + console panel) ===== */
+#fg-main-layout {
+  display: flex;
+  align-items: stretch;
   margin-top: 20px;
+  border-radius: var(--radius);
+  overflow: hidden;
   box-shadow: 0 8px 40px rgba(0,0,0,0.5);
   border: 1px solid #192236;
+  min-height: 400px;
+}
+
+#fg-canvas-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 400px;
+  background: #080F1C;
+  overflow: visible;
 }
 
 /* Subtle grid on canvas */
@@ -805,6 +813,102 @@ body, .card, .scope-block, .card-header, .editor-footer,
   background-size: 40px 40px;
   pointer-events: none;
   z-index: 0;
+}
+
+/* ===== Right console panel ===== */
+#fg-console-panel {
+  width: 230px;
+  flex-shrink: 0;
+  background: #0A0C18;
+  border-left: 1px solid #1A1F36;
+  display: flex;
+  flex-direction: column;
+}
+
+.fg-console-hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-bottom: 1px solid #1A1F36;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7C86B8;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  flex-shrink: 0;
+}
+
+.fg-console-hdr-hint {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #3A4060;
+  text-transform: none;
+  font-weight: 400;
+}
+
+#fg-console-output {
+  flex: 1;
+  padding: 12px 13px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: #D1D5DB;
+  line-height: 1.65;
+}
+
+.fg-console-empty {
+  color: #3A4060;
+  font-style: italic;
+  font-size: 11px;
+}
+
+.fg-console-output .fg-console-line {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: #D1FAE5;
+}
+
+/* ===== Speed controls in flow graph header ===== */
+.fg-speed-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fg-speed-label {
+  font-size: 11px;
+  color: var(--text-muted, #6B7280);
+  white-space: nowrap;
+  margin-right: 2px;
+}
+
+.fg-speed-btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: #6B7280;
+  border-radius: 7px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-family: var(--mono);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  line-height: 1.4;
+}
+
+.fg-speed-btn:hover {
+  background: rgba(255,255,255,0.10);
+  color: #E5E7EB;
+}
+
+.fg-speed-btn.fg-speed-active {
+  background: rgba(79,126,247,0.18);
+  border-color: rgba(99,138,255,0.45);
+  color: #818CF8;
 }
 
 #fg-arrows {

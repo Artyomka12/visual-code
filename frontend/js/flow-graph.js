@@ -101,11 +101,25 @@ const fgTitleEl = document.getElementById('fg-title');
 let fgTimers  = [];
 const fgNodeReg = new Map(); // nodeId → { el, node }
 
+/* ===== Animation speed ===== */
+let FG_SPEED = 1; // 0.5 | 1 | 2
+function dur(s)    { return s  / FG_SPEED; } // GSAP duration (seconds)
+function delMs(ms) { return ms / FG_SPEED; } // setTimeout delay (ms)
+
 /* ===== Back button ===== */
 fgBackBtn.addEventListener('click', () => {
   stopFlowAnimation();
   fgView.classList.remove('active');
   document.getElementById('input-view').classList.add('active');
+});
+
+/* ===== Speed buttons ===== */
+document.querySelectorAll('.fg-speed-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    FG_SPEED = parseFloat(btn.dataset.speed);
+    document.querySelectorAll('.fg-speed-btn').forEach(b => b.classList.remove('fg-speed-active'));
+    btn.classList.add('fg-speed-active');
+  });
 });
 
 /* ===================================================
@@ -704,36 +718,55 @@ function renderFlowGraph(graph) {
   fgTokEl.innerHTML   = '';
   fgNodeReg.clear();
 
+  // Reset the right console panel on each new render
+  const fgConsolePanelOut = document.getElementById('fg-console-output');
+  if (fgConsolePanelOut) {
+    fgConsolePanelOut.innerHTML = '<span class="fg-console-empty">Вывода пока нет</span>';
+  }
+
   const { nodes, edges } = graph;
 
-  // Expand canvas to fit all nodes (vertical layout — height drives scroll).
-  if (nodes.length > 0) {
-    const maxR = Math.max(...nodes.map(n => n.x + (n.width  || FG_NODE_W))) + 60;
-    const maxB = Math.max(...nodes.map(n => n.y + (n.height || FG_NODE_H))) + 100;
-    fgCanvas.style.minWidth  = Math.max(440, maxR) + 'px';
+  // Expand canvas to fit visible nodes (exclude console — it lives in the right panel).
+  const visibleNodes = nodes.filter(n => n.type !== 'console');
+  if (visibleNodes.length > 0) {
+    const maxR = Math.max(...visibleNodes.map(n => n.x + (n.width  || FG_NODE_W))) + 60;
+    const maxB = Math.max(...visibleNodes.map(n => n.y + (n.height || FG_NODE_H))) + 100;
+    const canvasW = Math.max(440, maxR);
+    fgCanvas.style.minWidth  = canvasW + 'px';
     fgCanvas.style.minHeight = Math.max(400, maxB) + 'px';
+    // Position the console node just off-canvas to the right so tokens fly there
+    const consoleNode = nodes.find(n => n.type === 'console');
+    if (consoleNode) {
+      consoleNode.x = canvasW + 20;
+      consoleNode.y = FG_MARGIN_TOP;
+    }
   }
 
   /* --- Nodes --- */
-  nodes.forEach((node, i) => {
-    const isConsole = node.type === 'console';
-    const c         = fgColors(node.type);
-    const typeDef   = FG_NODE_TYPES[node.type] || FG_NODE_TYPES.assignment;
+  let visibleIdx = 0; // stagger index counts only visible nodes
+  nodes.forEach((node) => {
+    // Console node lives in the right panel — register with null el, skip DOM creation
+    if (node.type === 'console') {
+      fgNodeReg.set(node.id, { el: null, node });
+      return;
+    }
+
+    const c       = fgColors(node.type);
+    const typeDef = FG_NODE_TYPES[node.type] || FG_NODE_TYPES.assignment;
+    const i       = visibleIdx++;
 
     const el = document.createElement('div');
     el.className = `fg-node fg-node--${node.type}`;
     el.id = `fn-${node.id}`;
-    // Sizes driven by JS constants (CSS has matching defaults)
-    el.style.left   = node.x + 'px';
-    el.style.top    = node.y + 'px';
-    el.style.width  = (node.width  || FG_NODE_W) + 'px';
+    el.style.left  = node.x + 'px';
+    el.style.top   = node.y + 'px';
+    el.style.width = (node.width  || FG_NODE_W) + 'px';
     if (node.height && node.height !== FG_NODE_H) el.style.height = node.height + 'px';
 
     if (node.type === 'loop') {
-      // Hexagon shape for FOR loops (visually signals iteration)
       const w   = node.width  || FG_NODE_W;
       const h   = node.height || FG_NODE_H;
-      const cut = Math.round(w * 0.15); // corner cut: ~24px at 160w
+      const cut = Math.round(w * 0.15);
       const hh  = Math.round(h / 2);
       el.style.background = 'transparent';
       el.style.border     = 'none';
@@ -750,10 +783,9 @@ function renderFlowGraph(graph) {
           <div class="fg-node-label">${fgEsc(node.label)}</div>
         </div>`;
     } else if (node.type === 'assignment') {
-      // Parallelogram shape for variable assignments (classic flowchart I/O)
       const w  = node.width  || FG_NODE_W;
       const h  = node.height || FG_NODE_H;
-      const sk = 14; // horizontal skew in px
+      const sk = 14;
       el.style.background = 'transparent';
       el.style.border     = 'none';
       el.style.boxShadow  = 'none';
@@ -793,21 +825,17 @@ function renderFlowGraph(graph) {
           <span class="fg-node-type">${typeDef.typeLabel}</span>
           <span class="fg-node-dot" style="background:${c.pulse}"></span>
         </div>
-        <div class="fg-node-label${isConsole ? ' fg-console-output' : ''}"
-             ${isConsole ? 'style="opacity:0"' : ''}>
-          ${isConsole ? '' : fgEsc(node.label)}
-        </div>`;
+        <div class="fg-node-label">${fgEsc(node.label)}</div>`;
     }
 
     fgNodesEl.appendChild(el);
     fgNodeReg.set(node.id, { el, node });
 
-    // Staggered entrance — fallback to instant-visible if GSAP unavailable
     try {
       gsap.from(el, {
         opacity: 0, scale: 0.85, y: 8,
-        duration: 0.28, ease: 'back.out(1.6)',
-        delay: 0.04 + i * 0.055,
+        duration: dur(0.28), ease: 'back.out(1.6)',
+        delay: dur(0.04 + i * 0.055),
       });
     } catch (_) {
       el.style.opacity = '1';
@@ -849,6 +877,8 @@ function renderFlowGraph(graph) {
 
     // Suppress edges from body nodes to post-loop nodes — exit-arc handles them visually.
     if (isBodyFlag(fn) && !isBodyFlag(tn) && tn.type !== 'loop') continue;
+    // Console lives in the right panel — suppress canvas edges to it.
+    if (tn.type === 'console') continue;
 
     const isTrueBranch  = edge.branch === 'true';
     const isFalseBranch = edge.branch === 'false';
@@ -1046,6 +1076,21 @@ function litNode(nodeId) {
   const entry = fgNodeReg.get(nodeId);
   if (!entry) return;
   const c = fgColors(entry.node.type);
+
+  // Console node has no canvas element — flash the right panel border instead.
+  if (!entry.el) {
+    const panel = document.getElementById('fg-console-panel');
+    if (panel) {
+      gsap.killTweensOf(panel, 'boxShadow');
+      gsap.to(panel, {
+        boxShadow: '0 0 0 2px rgba(139,92,246,0.7), inset 0 0 18px rgba(139,92,246,0.12)',
+        duration: dur(0.18), ease: 'power2.out',
+        onComplete: () => gsap.to(panel, { boxShadow: 'none', duration: dur(0.65), ease: 'power2.in' }),
+      });
+    }
+    return;
+  }
+
   // SVG-shaped nodes: apply glow to polygon element, not boxShadow.
   const svgSelectors = {
     condition:  '.fg-cond-diamond polygon',
@@ -1060,9 +1105,9 @@ function litNode(nodeId) {
       gsap.to(poly, {
         attr: { 'stroke-width': 2.5 },
         filter: `drop-shadow(0 0 8px ${c.pulse})`,
-        duration: 0.18, ease: 'power2.out',
+        duration: dur(0.18), ease: 'power2.out',
         onComplete: () => {
-          gsap.to(poly, { attr: { 'stroke-width': 1.5 }, filter: 'none', duration: 0.65, ease: 'power2.in' });
+          gsap.to(poly, { attr: { 'stroke-width': 1.5 }, filter: 'none', duration: dur(0.65), ease: 'power2.in' });
         },
       });
     }
@@ -1071,9 +1116,9 @@ function litNode(nodeId) {
   gsap.killTweensOf(entry.el, 'boxShadow');
   gsap.to(entry.el, {
     boxShadow: `0 0 0 2px ${c.border}, 0 0 22px ${c.glow}, 0 0 48px ${c.outer}`,
-    duration: 0.18, ease: 'power2.out',
+    duration: dur(0.18), ease: 'power2.out',
     onComplete: () => {
-      gsap.to(entry.el, { boxShadow: 'none', duration: 0.65, ease: 'power2.in' });
+      gsap.to(entry.el, { boxShadow: 'none', duration: dur(0.65), ease: 'power2.in' });
     },
   });
 }
@@ -1100,7 +1145,7 @@ function pulseNode(nodeId) {
 
   gsap.fromTo(pulse,
     { scale: 1, opacity: 0.65 },
-    { scale: 1.5, opacity: 0, duration: 0.52, ease: 'power2.out',
+    { scale: 1.5, opacity: 0, duration: dur(0.52), ease: 'power2.out',
       onComplete: () => pulse.remove() }
   );
 }
@@ -1109,19 +1154,15 @@ function pulseNode(nodeId) {
    Console: accumulates output lines one by one.
    Each call adds ONLY the new lines since last call.
    =================================================== */
-function revealConsole(consoleNodeId, lines) {
-  const entry = fgNodeReg.get(consoleNodeId);
-  if (!entry) return;
-
-  const outEl = entry.el.querySelector('.fg-console-output');
+function revealConsole(_consoleNodeId, lines) {
+  const outEl = document.getElementById('fg-console-output');
   if (!outEl) return;
 
-  // Make container visible on first call
-  if (parseFloat(getComputedStyle(outEl).opacity) < 0.5) {
-    gsap.set(outEl, { opacity: 1 });
-  }
+  // Remove the "empty" placeholder on first output
+  const emptyEl = outEl.querySelector('.fg-console-empty');
+  if (emptyEl) emptyEl.remove();
 
-  // Append only new lines
+  // Append only new lines since last call
   const existing = outEl.querySelectorAll('.fg-console-line').length;
   const newLines  = lines.slice(existing);
 
@@ -1131,8 +1172,8 @@ function revealConsole(consoleNodeId, lines) {
     lineEl.textContent = text;
     outEl.appendChild(lineEl);
     gsap.fromTo(lineEl,
-      { opacity: 0, y: 5 },
-      { opacity: 1, y: 0, duration: 0.32, ease: 'power2.out', delay: 0.06 + i * 0.08 }
+      { opacity: 0, x: -6 },
+      { opacity: 1, x: 0, duration: dur(0.32), ease: 'power2.out', delay: dur(0.06 + i * 0.08) }
     );
   });
 }
@@ -1174,40 +1215,35 @@ function animateLoopIterations(el, loopNode, path, nodeMap, curIdx, token, onCom
 
     gsap.to(el, {
       left: tokenLeft(computeNode), top: tokenTop(computeNode),
-      duration: 0.52, delay: 0.08, ease: 'power2.inOut',
+      duration: dur(0.52), delay: dur(0.08), ease: 'power2.inOut',
       onComplete: () => {
         litNode(computeId);
 
         const newLabel = `${bodyOp.target} = ${fgFmtVal(bodyOp.values[iter])}`;
 
-        // Squish → swap text → bounce (in-place self-update animation)
         gsap.to(el, {
-          scale: 0.72, duration: 0.16, ease: 'power2.in',
+          scale: 0.72, duration: dur(0.16), ease: 'power2.in',
           onComplete: () => {
             el.textContent = newLabel;
             token.currentVar = bodyOp.target;
 
-            // Bounce back to full size
             gsap.to(el, {
-              scale: 1, duration: 0.26, ease: 'back.out(1.9)',
+              scale: 1, duration: dur(0.26), ease: 'back.out(1.9)',
               onComplete: () => {
                 if (iter < N - 1) {
-                  // Snap token back to LOOP position (instant) then run next iteration
                   const t = setTimeout(() => {
                     gsap.set(el, { left: tokenLeft(loopNode), top: tokenTop(loopNode) });
                     runIteration(iter + 1);
-                  }, 220);
+                  }, delMs(220));
                   fgTimers.push(t);
                 } else {
-                  // Last iteration: continue forward
                   runIteration(N);
                 }
               },
             });
-            // Amber glow in parallel with the bounce
             gsap.fromTo(el,
               { boxShadow: '0 0 0 2px rgba(245,158,11,0.9), 0 0 20px rgba(245,158,11,0.55)' },
-              { boxShadow: 'none', duration: 0.50, ease: 'power2.out' }
+              { boxShadow: 'none', duration: dur(0.50), ease: 'power2.out' }
             );
           },
         });
@@ -1247,30 +1283,26 @@ function animateCondition(el, conditionNode, path, nodeMap, curIdx, token, onCom
   // Loop-body conditions evaluate per-token; standalone conditions use op.result.
   const result = (token.conditionResult !== undefined) ? token.conditionResult : op.result;
 
-  // Scale-in bounce (matches other node arrival animations)
   gsap.fromTo(el,
     { scale: 1.2 },
-    { scale: 1, duration: 0.20, ease: 'back.out(1.3)',
+    { scale: 1, duration: dur(0.20), ease: 'back.out(1.3)',
       onComplete: () => {
         showConditionResult(conditionNode.id, result);
 
         if (result || op.hasElse) {
-          // TRUE → continue along the true path.
-          // FALSE with else → tracePath already routed us to the false branch; just continue.
-          const t = setTimeout(() => walkPath(el, path, nodeMap, curIdx, token, onComplete), 380);
+          const t = setTimeout(() => walkPath(el, path, nodeMap, curIdx, token, onComplete), delMs(380));
           fgTimers.push(t);
         } else {
-          // FALSE with no else: token dissolves; Console is never updated.
           const t = setTimeout(() => {
             gsap.to(el, {
-              opacity: 0, scale: 0.55, duration: 0.34, ease: 'power2.in',
+              opacity: 0, scale: 0.55, duration: dur(0.34), ease: 'power2.in',
               onComplete: () => {
                 el.remove();
-                const t2 = setTimeout(() => { if (onComplete) onComplete(); }, 260);
+                const t2 = setTimeout(() => { if (onComplete) onComplete(); }, delMs(260));
                 fgTimers.push(t2);
               },
             });
-          }, 440);
+          }, delMs(440));
           fgTimers.push(t);
         }
       },
@@ -1308,7 +1340,7 @@ function startFlowAnimation(graph) {
     launchToken(tokens[idx], nodeMap, edgeMap, () => runToken(idx + 1));
   }
 
-  const t = setTimeout(() => runToken(0), 200);
+  const t = setTimeout(() => runToken(0), delMs(200));
   fgTimers.push(t);
 }
 
@@ -1329,7 +1361,7 @@ function launchToken(token, nodeMap, edgeMap, onComplete) {
 
   gsap.to(el, {
     opacity: 1, scale: 1,
-    duration: 0.24, ease: 'back.out(1.5)',
+    duration: dur(0.24), ease: 'back.out(1.5)',
     onComplete: () => {
       litNode(token.startNodeId);
       if (token.iterValue !== undefined) highlightLoopIteration(token.startNodeId, token.iterValue);
@@ -1346,15 +1378,15 @@ function walkPath(el, path, nodeMap, idx, token, onComplete) {
     const lastNode = nodeMap.get(lastId);
 
     if (lastNode && lastNode.type === 'console') {
-      // Token dissolves into Console, which reveals accumulated output
+      // Token dissolves as it enters the right console panel
       gsap.to(el, {
         opacity: 0, scale: 0.55,
-        duration: 0.26, ease: 'power2.in',
+        duration: dur(0.26), ease: 'power2.in',
         onComplete: () => {
           el.remove();
           revealConsole(token.consoleNodeId, token.consoleLines);
           litNode(token.consoleNodeId || lastId);
-          const t = setTimeout(() => { if (onComplete) onComplete(); }, 480);
+          const t = setTimeout(() => { if (onComplete) onComplete(); }, delMs(480));
           fgTimers.push(t);
         },
       });
@@ -1364,7 +1396,7 @@ function walkPath(el, path, nodeMap, idx, token, onComplete) {
     // Terminus that isn't Console: settle in place
     gsap.fromTo(el,
       { scale: 1.18 },
-      { scale: 1, duration: 0.26, ease: 'back.out(1.4)',
+      { scale: 1, duration: dur(0.26), ease: 'back.out(1.4)',
         onComplete: () => { if (onComplete) onComplete(); } }
     );
     return;
@@ -1377,29 +1409,25 @@ function walkPath(el, path, nodeMap, idx, token, onComplete) {
   // Pulse fires on departure
   pulseNode(path[idx]);
 
-  // Token slides to next node — travels horizontally along the edge line
   gsap.to(el, {
     left:     tokenLeft(nextNode),
     top:      tokenTop(nextNode),
-    duration: 0.62,
-    delay:    0.10,
+    duration: dur(0.62),
+    delay:    dur(0.10),
     ease:     'power2.inOut',
     onComplete: () => {
       litNode(nextId);
 
       if (nextNode.type === 'compute') {
-        // Arriving at a standalone ComputeNode: transform token (or replace)
         transformAtCompute(el, nextNode, path, nodeMap, idx + 1, token, onComplete);
       } else if (nextNode.type === 'loop') {
-        // Arriving at a LoopNode that has body ops: run N iterations
         animateLoopIterations(el, nextNode, path, nodeMap, idx + 1, token, onComplete);
       } else if (nextNode.type === 'condition') {
-        // Arriving at a ConditionNode: evaluate and either continue or dissolve
         animateCondition(el, nextNode, path, nodeMap, idx + 1, token, onComplete);
       } else {
         gsap.fromTo(el,
           { scale: 1.2 },
-          { scale: 1, duration: 0.20, ease: 'back.out(1.3)',
+          { scale: 1, duration: dur(0.20), ease: 'back.out(1.3)',
             onComplete: () => walkPath(el, path, nodeMap, idx + 1, token, onComplete),
           }
         );
@@ -1438,36 +1466,31 @@ function transformAtCompute(el, computeNode, path, nodeMap, curIdx, token, onCom
   const isSelfUpdate = op.target === token.currentVar;
 
   if (isSelfUpdate) {
-    /* ── In-place update animation ── */
     gsap.to(el, {
-      scale: 0.72, duration: 0.16, ease: 'power2.in',
+      scale: 0.72, duration: dur(0.16), ease: 'power2.in',
       onComplete: () => {
-        // Swap the text while squished (the swap is invisible at small scale)
         el.textContent = newLabel;
-        token.currentVar = op.target; // stays the same, but explicit is clearer
+        token.currentVar = op.target;
 
-        // Bounce back to full size
         gsap.to(el, {
-          scale: 1, duration: 0.26, ease: 'back.out(1.9)',
+          scale: 1, duration: dur(0.26), ease: 'back.out(1.9)',
           onComplete: () => walkPath(el, path, nodeMap, curIdx, token, onComplete),
         });
 
-        // Amber glow in parallel (compute color) — fades on its own
         gsap.fromTo(el,
           { boxShadow: '0 0 0 2px rgba(245,158,11,0.9), 0 0 20px rgba(245,158,11,0.55)' },
-          { boxShadow: 'none', duration: 0.50, ease: 'power2.out' }
+          { boxShadow: 'none', duration: dur(0.50), ease: 'power2.out' }
         );
       },
     });
 
   } else {
-    /* ── Replace animation: old token out, new token in ── */
     gsap.to(el, {
-      scale: 0.60, opacity: 0, duration: 0.22, ease: 'power2.in',
+      scale: 0.60, opacity: 0, duration: dur(0.22), ease: 'power2.in',
       onComplete: () => {
         el.remove();
 
-        token.currentVar = op.target; // update tracking BEFORE creating new element
+        token.currentVar = op.target;
 
         const newEl = document.createElement('div');
         newEl.className   = 'data-token';
@@ -1481,7 +1504,7 @@ function transformAtCompute(el, computeNode, path, nodeMap, curIdx, token, onCom
 
         gsap.to(newEl, {
           opacity: 1, scale: 1,
-          duration: 0.30, ease: 'back.out(1.6)',
+          duration: dur(0.30), ease: 'back.out(1.6)',
           onComplete: () => walkPath(newEl, path, nodeMap, curIdx, token, onComplete),
         });
       },
@@ -1570,7 +1593,7 @@ function startFlowGraph(steps, sourceCode = '') {
     }
 
     renderFlowGraph(graph);
-    setTimeout(() => startFlowAnimation(graph), 360);
+    setTimeout(() => startFlowAnimation(graph), delMs(360));
   } catch (err) {
     console.error('[FlowGraph]', err);
     fgNodesEl.innerHTML = `

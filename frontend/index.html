@@ -191,12 +191,29 @@
       <div class="viz-header">
         <button id="fg-back-btn" class="btn btn-secondary">← Изменить код</button>
         <div class="viz-title" id="fg-title">Flow Graph</div>
+        <div class="fg-speed-controls">
+          <span class="fg-speed-label">Скорость:</span>
+          <button class="fg-speed-btn" data-speed="0.5">0.5×</button>
+          <button class="fg-speed-btn fg-speed-active" data-speed="1">1×</button>
+          <button class="fg-speed-btn" data-speed="2">2×</button>
+        </div>
         <div class="fg-exp-badge">Experimental</div>
       </div>
-      <div id="fg-canvas-wrap">
-        <svg id="fg-arrows" aria-hidden="true"></svg>
-        <div id="fg-nodes"></div>
-        <div id="fg-tokens"></div>
+      <div id="fg-main-layout">
+        <div id="fg-canvas-wrap">
+          <svg id="fg-arrows" aria-hidden="true"></svg>
+          <div id="fg-nodes"></div>
+          <div id="fg-tokens"></div>
+        </div>
+        <div id="fg-console-panel">
+          <div class="fg-console-hdr">
+            <span>Консоль</span>
+            <span class="fg-console-hdr-hint">print()</span>
+          </div>
+          <div class="fg-console-output" id="fg-console-output">
+            <span class="fg-console-empty">Вывода пока нет</span>
+          </div>
+        </div>
       </div>
     </section>
 
