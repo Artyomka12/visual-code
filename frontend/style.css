@@ -723,8 +723,8 @@ body, .card, .scope-block, .card-header, .editor-footer,
 .dark .error-banner { border-color: #6E1F1F; }
 .dark .warn-banner  { border-color: #4A3000; }
 
-/* ===== Mode Selector ===== */
-.mode-selector-row {
+/* ===== Mode selector (input view) ===== */
+.bs-mode-selector {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -732,19 +732,19 @@ body, .card, .scope-block, .card-header, .editor-footer,
   border-top: 1px solid var(--border);
   background: #F8FAFF;
 }
-.mode-label {
+.bs-mode-label {
   font-size: 13px;
   color: var(--text-mid);
   font-weight: 500;
 }
-.mode-toggle {
+.bs-mode-toggle {
   display: flex;
   background: var(--border);
   border-radius: 8px;
   padding: 2px;
   gap: 2px;
 }
-.mode-btn {
+.bs-mode-btn {
   font-family: var(--font);
   font-size: 13px;
   font-weight: 500;
@@ -756,401 +756,110 @@ body, .card, .scope-block, .card-header, .editor-footer,
   color: var(--text-mid);
   transition: background 0.18s, color 0.18s, box-shadow 0.18s;
 }
-.mode-btn.active {
+.bs-mode-btn.active {
   background: var(--surface);
   color: var(--primary);
   box-shadow: 0 1px 4px rgba(0,0,0,0.12);
 }
-.mode-exp-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--amber);
-  background: var(--amber-bg);
-  border: 1px solid #FDE68A;
-  border-radius: 20px;
-  padding: 2px 8px;
-}
 
-/* ===== Flow Graph View ===== */
-.fg-exp-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--amber);
-  background: rgba(217,119,6,0.12);
-  border: 1px solid rgba(217,119,6,0.35);
-  border-radius: 20px;
-  padding: 3px 10px;
+/* ===== Block Scheme View ===== */
+#bs-view {
+  display: none;
+  flex-direction: column;
+  gap: 0;
 }
-
-/* ===== Flow Graph main layout (canvas + console panel) ===== */
-#fg-main-layout {
+#bs-view.active {
   display: flex;
-  align-items: stretch;
-  margin-top: 20px;
+}
+.bs-header {
+  display: flex;
+  align-items: center;
+  padding: 12px 0 16px;
+}
+.bs-body {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+#bs-canvas {
+  flex: 1;
+  background: #fff;
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
-  border: 1px solid #192236;
-  min-height: 400px;
+  box-shadow: var(--shadow);
+  min-height: 500px;
+  overflow: auto;
+  padding: 20px;
 }
-
-#fg-canvas-wrap {
-  position: relative;
-  flex: 1;
-  min-height: 400px;
-  background: #080F1C;
+#bs-svg {
+  display: block;
   overflow: visible;
 }
-
-/* Subtle grid on canvas */
-#fg-canvas-wrap::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(rgba(79,126,247,0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(79,126,247,0.04) 1px, transparent 1px);
-  background-size: 40px 40px;
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* ===== Right console panel ===== */
-#fg-console-panel {
-  width: 230px;
+.bs-sidebar {
+  width: 220px;
   flex-shrink: 0;
-  background: #0A0C18;
-  border-left: 1px solid #1A1F36;
   display: flex;
   flex-direction: column;
+  gap: 14px;
 }
-
-.fg-console-hdr {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 14px;
-  border-bottom: 1px solid #1A1F36;
-  font-size: 11px;
-  font-weight: 700;
-  color: #7C86B8;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  flex-shrink: 0;
+.bs-sidebar-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
 }
-
-.fg-console-hdr-hint {
-  margin-left: auto;
-  font-family: var(--mono);
-  font-size: 10px;
-  color: #3A4060;
-  text-transform: none;
-  font-weight: 400;
-}
-
-#fg-console-output {
-  flex: 1;
-  padding: 12px 13px;
-  overflow-y: auto;
-  font-family: var(--mono);
-  font-size: 13px;
-  color: #D1D5DB;
-  line-height: 1.65;
-}
-
-.fg-console-empty {
-  color: #3A4060;
-  font-style: italic;
-  font-size: 11px;
-}
-
-.fg-console-output .fg-console-line {
-  border: none;
-  background: none;
-  padding: 0;
-  margin: 0;
-  color: #D1FAE5;
-}
-
-/* ===== Speed controls in flow graph header ===== */
-.fg-speed-controls {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.fg-speed-label {
-  font-size: 11px;
-  color: var(--text-muted, #6B7280);
-  white-space: nowrap;
-  margin-right: 2px;
-}
-
-.fg-speed-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.10);
-  color: #6B7280;
-  border-radius: 7px;
-  padding: 3px 9px;
-  font-size: 11px;
-  font-family: var(--mono);
+.bs-sidebar-title {
+  font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
-  line-height: 1.4;
-}
-
-.fg-speed-btn:hover {
-  background: rgba(255,255,255,0.10);
-  color: #E5E7EB;
-}
-
-.fg-speed-btn.fg-speed-active {
-  background: rgba(79,126,247,0.18);
-  border-color: rgba(99,138,255,0.45);
-  color: #818CF8;
-}
-
-#fg-arrows {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  pointer-events: none;
-  z-index: 1;
-}
-
-#fg-nodes {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  z-index: 2;
-}
-
-#fg-tokens {
-  position: absolute;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  z-index: 3;
-  pointer-events: none;
-}
-
-/* ===== Flow Nodes ===== */
-.fg-node {
-  position: absolute;
-  width: 160px;      /* matches FG_NODE_W in flow-graph.js */
-  min-height: 80px;  /* matches FG_NODE_H in flow-graph.js */
-  border-radius: 14px;
-  padding: 11px 14px 11px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  border: 1px solid;
-  /* box-shadow animated by GSAP — keep transition only for subtle idle state */
-  transition: box-shadow 0.3s ease;
-}
-
-.fg-node-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.fg-node-type {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.3px;
-  font-family: var(--mono);
   text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-mid);
+  margin-bottom: 10px;
 }
-
-.fg-node-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  opacity: 0.7;
-}
-
-.fg-node-label {
-  font-family: var(--mono);
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.35;
-  word-break: break-all;
-}
-
-/* Assignment — parallelogram via SVG */
-.fg-node--assignment {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  overflow: visible;
-  padding: 0;
-}
-.fg-para-svg { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
-.fg-para-inner {
-  position: relative; z-index: 1;
-  width: 100%; height: 100%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 0 22px; text-align: center; gap: 3px;
-}
-.fg-para-inner .fg-node-type { font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 0.9px; color: #7BA8F7; }
-.fg-para-inner .fg-node-label { font-family: var(--mono); font-size: 13px; color: #BFDBFE; }
-
-/* Compute */
-.fg-node--compute {
-  background: #1A1100;
-  border-color: #92400E;
-  color: #FDE68A;
-}
-.fg-node--compute .fg-node-type { color: #F59E0B; }
-
-/* Print */
-.fg-node--print {
-  background: #091A12;
-  border-color: #176A42;
-  color: #A3E8C4;
-}
-.fg-node--print .fg-node-type { color: #27A15A; }
-
-/* Console */
-.fg-node--console {
-  background: #100B1F;
-  border-color: #5B35A8;
-  color: #CBBFF5;
-}
-.fg-node--console .fg-node-type { color: #8B5CF6; }
-
-/* Loop — hexagon via SVG */
-.fg-node--loop {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  overflow: visible;
-  padding: 0;
-}
-.fg-hex-svg { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
-.fg-hex-inner {
-  position: relative; z-index: 1;
-  width: 100%; height: 100%;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 0 28px; text-align: center; gap: 3px;
-}
-.fg-hex-inner .fg-node-type { font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: 0.9px; color: #22D3EE; }
-.fg-hex-inner .fg-node-label { font-family: var(--mono); font-size: 12px; color: #A5F3FC; }
-.fg-loop-range { opacity: 0.70; font-size: 11px; }
-.fg-loop-iter  { color: #67E8F9; font-weight: 700; font-size: 13px; }
-
-/* Condition — diamond shape, rendered via SVG in JS */
-.fg-node--condition {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  overflow: visible;
-  padding: 0;
-}
-
-.fg-cond-diamond {
-  position: absolute;
-  top: 0; left: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.fg-cond-inner {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
+.bs-speed-btns {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 0 26px;
-  text-align: center;
-  gap: 3px;
+  gap: 6px;
 }
-
-.fg-cond-inner .fg-node-type {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.9px;
-  color: #F97316;
-}
-
-.fg-cond-inner .fg-node-label {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: #FED7AA;
-  word-break: break-all;
-  line-height: 1.3;
-}
-
-.fg-cond-expr  { display: block; font-size: 11px; opacity: 0.70; margin-bottom: 2px; }
-.fg-cond-true  { display: block; color: #4ADE80; font-weight: 700; font-size: 13px; }
-.fg-cond-false { display: block; color: #F87171; font-weight: 700; font-size: 13px; }
-
-/* ===== Pulse ring (added/removed by JS) ===== */
-.fg-pulse {
-  position: absolute;
-  border-radius: 14px;
-  border: 1.5px solid;
-  pointer-events: none;
-  z-index: 1;
-  box-sizing: border-box;
-  transform-origin: center;
-}
-
-/* ===== DataToken — variable badge ===== */
-.data-token {
-  position: absolute;
-  background: rgba(37,99,235,0.16);
-  color: #93C5FD;
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.4px;
-  padding: 4px 12px;
-  border-radius: 8px;
-  white-space: nowrap;
-  border: 1px solid rgba(99,155,241,0.45);
-  pointer-events: none;
-  transform-origin: center;
-}
-
-/* ===== Console output (hidden until token arrives) ===== */
-.fg-console-output {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* opacity animated by GSAP */
-}
-
-.fg-console-line {
-  font-family: var(--mono);
+.bs-speed-btn {
+  flex: 1;
+  font-family: var(--font);
   font-size: 13px;
-  color: #C4B5FD;
-  line-height: 1.5;
-  white-space: pre;
+  font-weight: 600;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text-mid);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.bs-speed-btn:hover { background: var(--primary-light); border-color: var(--primary); }
+.bs-speed-btn.bs-speed-active {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+.bs-vars-section { min-height: 100px; }
+.bs-console-section { min-height: 120px; }
+.bs-panel-body {
+  font-size: 13px;
+  color: var(--text-mid);
+  min-height: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bs-panel-empty {
+  color: var(--text-light);
+  font-size: 12px;
 }
 
-/* ===== Flow Graph empty state ===== */
-.fg-empty {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: #334155;
-  font-size: 15px;
-  text-align: center;
-  line-height: 1.7;
-}
-
-/* ===== Dark mode overrides for mode selector ===== */
-.dark .mode-selector-row { background: #161F2E; border-color: #1E2D45; }
-.dark .mode-toggle { background: #0F172A; }
-.dark .mode-btn.active { background: #1E2D45; }
+/* Dark mode overrides */
+.dark .bs-mode-selector { background: #161F2E; border-color: #1E2D45; }
+.dark .bs-mode-toggle   { background: #0F172A; }
+.dark .bs-mode-btn.active { background: #1E2D45; }
+.dark #bs-canvas { background: #0F172A; border-color: #1E2D45; }
 
 /* ===== Responsive ===== */
 @media (max-width: 900px) {

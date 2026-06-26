@@ -153,22 +153,23 @@ document.getElementById('example-select').addEventListener('change', function ()
 });
 
 /* ===== Visualization mode ===== */
-let visualizationMode = 'classic';
+let vizMode = 'classic';
 
-document.querySelectorAll('.mode-btn').forEach(btn => {
+document.querySelectorAll('.bs-mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.bs-mode-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    visualizationMode = btn.dataset.mode;
+    vizMode = btn.dataset.mode;
   });
 });
 
 /* ===== Run button & view switching ===== */
 const runBtn     = document.getElementById('run-btn');
 const backBtn    = document.getElementById('back-btn');
+const bsBackBtn  = document.getElementById('bs-back-btn');
 const inputView  = document.getElementById('input-view');
 const vizView    = document.getElementById('viz-view');
-const fgView     = document.getElementById('flow-graph-view');
+const bsView     = document.getElementById('bs-view');
 const errorBanner= document.getElementById('error-banner');
 const errorText  = document.getElementById('error-text');
 const truncWarn  = document.getElementById('truncated-warn');
@@ -199,10 +200,10 @@ runBtn.addEventListener('click', async () => {
 
     inputView.classList.remove('active');
 
-    if (visualizationMode === 'flow_graph') {
-      // ── Flow Graph mode ──
-      fgView.classList.add('active');
-      startFlowGraph(result.steps, code);
+    if (vizMode === 'blockscheme') {
+      // ── Block Scheme mode ──
+      bsView.classList.add('active');
+      startBlockScheme(code);
     } else {
       // ── Classic mode ──
       buildCodeDisplay(code);
@@ -232,6 +233,11 @@ runBtn.addEventListener('click', async () => {
 backBtn.addEventListener('click', () => {
   stopAnimation();
   vizView.classList.remove('active');
+  inputView.classList.add('active');
+});
+
+bsBackBtn.addEventListener('click', () => {
+  bsView.classList.remove('active');
   inputView.classList.add('active');
 });
 
