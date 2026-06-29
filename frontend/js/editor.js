@@ -190,6 +190,21 @@ runBtn.addEventListener('click', async () => {
   runBtn.classList.add('btn-loading');
   runBtn.textContent = 'Запуск...';
 
+  // Block Scheme builds a static flowchart — no backend needed
+  if (vizMode === 'blockscheme') {
+    try {
+      inputView.classList.remove('active');
+      bsView.classList.add('active');
+      startBlockScheme(code);
+    } catch (err) {
+      showError('Ошибка построения схемы: ' + err.message);
+    } finally {
+      runBtn.classList.remove('btn-loading');
+      runBtn.innerHTML = '<span class="btn-icon">▶</span> Запустить';
+    }
+    return;
+  }
+
   try {
     const result = await traceCode(code);
 
@@ -200,27 +215,21 @@ runBtn.addEventListener('click', async () => {
 
     inputView.classList.remove('active');
 
-    if (vizMode === 'blockscheme') {
-      // ── Block Scheme mode ──
-      bsView.classList.add('active');
-      startBlockScheme(code);
+    // ── Classic mode ──
+    buildCodeDisplay(code);
+    if (result.truncated) {
+      truncWarn.textContent = '⚠ Код содержит более 600 шагов — показаны первые 600';
+      truncWarn.classList.remove('hidden');
+    } else if (result.error) {
+      const lineInfo = result.error.line ? ` (строка ${result.error.line})` : '';
+      truncWarn.textContent = `⚠ Ошибка выполнения${lineInfo}: ${result.error.message}`;
+      truncWarn.classList.remove('hidden');
     } else {
-      // ── Classic mode ──
-      buildCodeDisplay(code);
-      if (result.truncated) {
-        truncWarn.textContent = '⚠ Код содержит более 600 шагов — показаны первые 600';
-        truncWarn.classList.remove('hidden');
-      } else if (result.error) {
-        const lineInfo = result.error.line ? ` (строка ${result.error.line})` : '';
-        truncWarn.textContent = `⚠ Ошибка выполнения${lineInfo}: ${result.error.message}`;
-        truncWarn.classList.remove('hidden');
-      } else {
-        truncWarn.classList.add('hidden');
-      }
-      vizView.classList.add('active');
-      document.getElementById('viz-title').textContent = detectTitle(code);
-      startAnimation(result.steps, result.error);
+      truncWarn.classList.add('hidden');
     }
+    vizView.classList.add('active');
+    document.getElementById('viz-title').textContent = detectTitle(code);
+    startAnimation(result.steps, result.error);
 
   } catch (err) {
     showError('Не удалось подключиться к серверу. Убедитесь, что бэкенд запущен.');

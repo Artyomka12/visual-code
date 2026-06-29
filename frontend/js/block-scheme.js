@@ -8,12 +8,17 @@ const BS = {
   ACTION_W: 140, ACTION_H: 50, ACTION_RX:   10,
   COND_W:   130, COND_H:   72,
   LOOP_W:   160, LOOP_H:   62, LOOP_FLAT:   36,
+  TERM_W:   120, TERM_H:   44,
   V_GAP:     56,
   H_OFF:    130,   // branch x-offset for if-else
   BACK_PAD:  50,   // extra left padding for back arrows
   EXIT_PAD:  50,   // extra right padding for exit arrows
   WRAP_PAD:  90,   // extra right padding for "Нет" wrap inside loop
   SVG_PAD:   50,
+  FRAME_NEST:  35,  // extra gap per side between nested loop frames
+  FRAME_PAD_X: 25,  // x-padding from widest node to frame border
+  FRAME_PAD_Y: 10,  // y-padding above loop top / below body bottom
+  BACK_DOWN:   10,  // px down before turning left on back arrow
 };
 
 let _uid = 0;
@@ -39,9 +44,10 @@ function parseBlock(lines, si, indent) {
     if (l.ind < indent) break;
     if (l.ind > indent) { i++; continue; }
     if (l.s === 'else:' || l.s.startsWith('elif ')) break;
-    if      (l.s.startsWith('for ')) { const r = parseLoop(lines, i, indent);      nodes.push(r.node); i = r.next; }
-    else if (l.s.startsWith('if '))  { const r = parseCond(lines, i, indent);      nodes.push(r.node); i = r.next; }
-    else                              { nodes.push(parseStmt(l)); i++; }
+    if      (l.s.startsWith('for '))   { const r = parseLoop(lines, i, indent);  nodes.push(r.node); i = r.next; }
+    else if (l.s.startsWith('while ')) { const r = parseWhile(lines, i, indent); nodes.push(r.node); i = r.next; }
+    else if (l.s.startsWith('if '))    { const r = parseCond(lines, i, indent);  nodes.push(r.node); i = r.next; }
+    else                               { nodes.push(parseStmt(l)); i++; }
   }
   return { nodes, next: i };
 }
@@ -65,14 +71,28 @@ function parseLoop(lines, i, indent) {
   return { node: { id: uid(), type: 'loop', label, body }, next };
 }
 
+function parseWhile(lines, i, indent) {
+  const m = lines[i].s.match(/^while\s+(.+?)\s*:$/);
+  const label = m ? m[1].trim() : lines[i].s.replace(/^while\s+/, '').replace(/:$/, '');
+  const { nodes: body, next } = parseBlock(lines, i + 1, indent + 4);
+  return { node: { id: uid(), type: 'loop', label, body }, next };
+}
+
 function parseCond(lines, i, indent) {
-  const m = lines[i].s.match(/^if\s+(.+)\s*:$/);
-  const label = m ? m[1].trim() : lines[i].s.replace(/^if\s+/,'').replace(/:$/,'');
+  const raw = lines[i].s;
+  const m = raw.match(/^(?:if|elif)\s+(.+?)\s*:$/);
+  const label = m ? m[1].trim() : raw.replace(/^(?:if|elif)\s+/, '').replace(/:$/, '');
   const { nodes: yes, next: ay } = parseBlock(lines, i + 1, indent + 4);
   let no = [], next = ay, hasElse = false;
-  if (ay < lines.length && lines[ay].ind === indent && lines[ay].s === 'else:') {
-    const r = parseBlock(lines, ay + 1, indent + 4);
-    no = r.nodes; next = r.next; hasElse = true;
+  if (ay < lines.length && lines[ay].ind === indent) {
+    if (lines[ay].s === 'else:') {
+      const r = parseBlock(lines, ay + 1, indent + 4);
+      no = r.nodes; next = r.next; hasElse = true;
+    } else if (lines[ay].s.startsWith('elif ')) {
+      // elif → рекурсивно превращается во вложенный if в no-ветви
+      const r = parseCond(lines, ay, indent);
+      no = [r.node]; next = r.next; hasElse = true;
+    }
   }
   return { node: { id: uid(), type: 'condition', label, yes, no, hasElse }, next };
 }
@@ -83,7 +103,9 @@ function parseCond(lines, i, indent) {
 
 function layoutTree(tree) {
   const lnodes = [], edges = [];
-  layoutSeq(tree, BS.SVG_PAD + 200, BS.SVG_PAD, null, lnodes, edges);
+  const startNode = { id: uid(), type: 'terminal', label: 'Начало' };
+  const endNode   = { id: uid(), type: 'terminal', label: 'Конец'  };
+  layoutSeq([startNode, ...tree, endNode], BS.SVG_PAD + 200, BS.SVG_PAD, null, lnodes, edges);
   return { lnodes, edges };
 }
 
@@ -126,10 +148,10 @@ function layoutSeq(nodes, cx, y0, loopCtx, lnodes, edges) {
       const top = ln.cy - ln.h / 2;
 
       if (lastLoop) {
-        // Loop exit arrow: right point → right bend → down → this node top
+        // Loop exit arrow: right tip → frameRight border → down → this node top
         const rx = lastLoop.cx + lastLoop.w / 2;
-        const bx = lastLoop.exitBendX !== undefined ? lastLoop.exitBendX : rx + BS.EXIT_PAD;
-        edges.push(ePath([P(rx, lastLoop.cy), P(bx, lastLoop.cy), P(bx, top), P(ln.cx, top)]));
+        edges.push(ePath([P(rx, lastLoop.cy), P(lastLoop.frameRight, lastLoop.cy),
+                          P(lastLoop.frameRight, top), P(ln.cx, top)]));
         lastLoop = null;
       } else {
         addFromJoin(top);   // connect condition join → this node top
@@ -153,6 +175,7 @@ function bsz(type) {
   if (type === 'assignment') return { w: BS.ASSIGN_W, h: BS.ASSIGN_H };
   if (type === 'condition')  return { w: BS.COND_W,   h: BS.COND_H   };
   if (type === 'loop')       return { w: BS.LOOP_W,   h: BS.LOOP_H   };
+  if (type === 'terminal')   return { w: BS.TERM_W,   h: BS.TERM_H   };
   return { w: BS.ACTION_W, h: BS.ACTION_H };
 }
 
@@ -173,11 +196,10 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
     const loopCY = loopCtx.cy;
 
     // YES → left column
-    const yesOut = [];
+    let yesBot = branchTop;
     if (node.yes.length > 0) {
-      linSeq(node.yes, yesCX, branchTop, yesOut);
-      yesOut.forEach(n => lnodes.push(n));
       edges.push(ePath([P(cx - w/2, cy), P(yesCX, cy), P(yesCX, branchTop)], 'Да', 'left'));
+      yesBot = linSeq(node.yes, yesCX, branchTop, lnodes, edges);
     } else {
       edges.push(ePath([P(cx - w/2, cy), P(cx - w/2, loopCY)], 'Да', 'left'));
       edges.push(ePath([P(cx - w/2, loopCY), P(loopLX, loopCY)]));
@@ -185,66 +207,46 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
 
     if (node.hasElse && node.no.length > 0) {
       // if/else inside loop: both branches merge at join, ONE back arrow to loop
-      const noOut = [];
-      linSeq(node.no, noCX, branchTop, noOut);
-      noOut.forEach(n => lnodes.push(n));
       edges.push(ePath([P(cx + w/2, cy), P(noCX, cy), P(noCX, branchTop)], 'Нет', 'right'));
+      const noBot = linSeq(node.no, noCX, branchTop, lnodes, edges);
 
-      const yesBot = yesOut.length > 0
-        ? yesOut[yesOut.length - 1].cy + yesOut[yesOut.length - 1].h / 2
-        : condBot;
-      const noBot  = noOut[noOut.length - 1].cy + noOut[noOut.length - 1].h / 2;
-      const joinY  = Math.max(yesBot, noBot) + Math.round(BS.V_GAP / 2);
+      const yesJoin = node.yes.length > 0 ? yesBot : condBot;
+      const joinY   = Math.max(yesJoin, noBot) + Math.round(BS.V_GAP / 2);
 
-      // Merge lines (no arrowhead) from branch bottoms to join point
-      if (yesOut.length > 0) {
+      if (node.yes.length > 0) {
         edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
       }
       edges.push({ points: [P(noCX, noBot), P(noCX, joinY), P(cx, joinY)], noArrow: true });
 
-      // Single back arrow from join → loop left point
-      const joinBackX = Math.min(yesCX - BS.ACTION_W / 2 - 8, loopLX - BS.BACK_PAD);
-      edges.push(ePath([P(cx, joinY), P(joinBackX, joinY), P(joinBackX, loopCY), P(loopLX, loopCY)]));
-
-      // Tell layoutSeq that exit arrow must clear the right-column branch
-      loopCtx.exitBendX = noCX + BS.ACTION_W / 2 + BS.EXIT_PAD;
+      edges.push(backArrow(cx, joinY, loopCtx));
 
     } else {
       // if without else inside loop: YES back arrow + NO wraps right to loop
-      if (yesOut.length > 0) {
-        const last = yesOut[yesOut.length - 1];
-        edges.push(ePath(backPath(yesCX, last.cy + last.h / 2, loopLX, loopCY)));
+      if (node.yes.length > 0) {
+        edges.push(backArrow(yesCX, yesBot, loopCtx));
       }
       const wrapX = cx + w/2 + BS.WRAP_PAD;
       edges.push(ePath([P(cx + w/2, cy), P(wrapX, cy), P(wrapX, loopCY), P(loopLX, loopCY)],
                        'Нет', 'right'));
     }
 
-    return condBot;  // caller is placeLoop; it uses the visual bottom separately
+    return condBot;
   }
 
   /* ── TOP LEVEL ── */
   // YES branch
-  const yesOut = [];
   let yesBot = branchTop;
   if (node.yes.length > 0) {
-    linSeq(node.yes, yesCX, branchTop, yesOut);
-    yesOut.forEach(n => lnodes.push(n));
     edges.push(ePath([P(cx - w/2, cy), P(yesCX, cy), P(yesCX, branchTop)], 'Да', 'left'));
-    const last = yesOut[yesOut.length - 1];
-    yesBot = last.cy + last.h / 2;
+    yesBot = linSeq(node.yes, yesCX, branchTop, lnodes, edges);
   }
 
   // NO branch
-  const noOut = [];
   let noBot = branchTop;
-  const bpX = noCX + BS.ACTION_W / 2 + 8; // bypass stub right edge
+  const bpX = noCX + BS.ACTION_W / 2 + 8;
   if (node.hasElse && node.no.length > 0) {
-    linSeq(node.no, noCX, branchTop, noOut);
-    noOut.forEach(n => lnodes.push(n));
     edges.push(ePath([P(cx + w/2, cy), P(noCX, cy), P(noCX, branchTop)], 'Нет', 'right'));
-    const last = noOut[noOut.length - 1];
-    noBot = last.cy + last.h / 2;
+    noBot = linSeq(node.no, noCX, branchTop, lnodes, edges);
   } else {
     edges.push(ePath([P(cx + w/2, cy), P(bpX, cy)], 'Нет', 'right', true));
   }
@@ -252,7 +254,7 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
   // Join Y
   const joinY = Math.max(yesBot, noBot) + BS.V_GAP;
 
-  // Merge arrows (no arrowhead — they lead into the next block below)
+  // Merge arrows (no arrowhead)
   const merge = (fx, fy, tx, ty) => {
     const pts = Math.abs(fx - tx) < 2
       ? [P(fx, fy), P(tx, ty)]
@@ -260,16 +262,14 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
     edges.push({ points: pts, noArrow: true });
   };
 
-  if (yesOut.length > 0) {
-    const last = yesOut[yesOut.length - 1];
-    merge(yesCX, last.cy + last.h/2, cx, joinY);
+  if (node.yes.length > 0) {
+    merge(yesCX, yesBot, cx, joinY);
   } else {
     merge(cx - w/2, cy, cx, joinY);
   }
 
-  if (node.hasElse && noOut.length > 0) {
-    const last = noOut[noOut.length - 1];
-    merge(noCX, last.cy + last.h/2, cx, joinY);
+  if (node.hasElse && node.no.length > 0) {
+    merge(noCX, noBot, cx, joinY);
   } else {
     edges.push({ points: [P(bpX, cy), P(bpX, joinY), P(cx, joinY)], noArrow: true });
   }
@@ -277,16 +277,55 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
   return joinY;
 }
 
-/* Linear sequence → fills outArr, returns bottom Y */
-function linSeq(nodes, cx, y, outArr) {
-  for (const n of nodes) {
-    const ln = mkNode(n, cx, y);
-    outArr.push(ln);
-    y = ln.cy + ln.h / 2 + BS.V_GAP;
+/* Lay out a branch sequence — pushes directly to lnodes/edges, returns bottom Y */
+function linSeq(nodes, cx, y, lnodes, edges) {
+  let bot      = y;
+  let lastLoop = null;
+  let joinY    = null;
+
+  const flushJoin = (toY) => {
+    if (joinY !== null) { edges.push(ePath([P(cx, joinY), P(cx, toY)])); joinY = null; }
+  };
+
+  for (let i = 0; i < nodes.length; i++) {
+    const n       = nodes[i];
+    const hasNext = i + 1 < nodes.length;
+
+    if (n.type === 'loop') {
+      flushJoin(bot);
+      const visBot = placeLoop(n, cx, bot, lnodes, edges);
+      lastLoop = lnodes.find(ln => ln.id === n.id);
+      bot = visBot;
+      if (hasNext) bot += BS.V_GAP;
+
+    } else if (n.type === 'condition') {
+      flushJoin(bot);
+      const j = layoutCond(n, cx, bot, null, lnodes, edges);
+      joinY    = j;
+      lastLoop = null;
+      bot = j;
+      if (hasNext) bot += BS.V_GAP;
+
+    } else {
+      const ln  = mkNode(n, cx, bot);
+      lnodes.push(ln);
+      const top = ln.cy - ln.h / 2;
+
+      if (lastLoop) {
+        const rx = lastLoop.cx + lastLoop.w / 2;
+        edges.push(ePath([P(rx, lastLoop.cy), P(lastLoop.frameRight, lastLoop.cy),
+                          P(lastLoop.frameRight, top), P(cx, top)]));
+        lastLoop = null;
+      } else {
+        flushJoin(top);
+      }
+
+      bot = ln.cy + ln.h / 2;
+      if (hasNext) bot += BS.V_GAP;
+    }
   }
-  return outArr.length
-    ? outArr[outArr.length-1].cy + outArr[outArr.length-1].h/2
-    : y;
+
+  return bot;
 }
 
 /* ── Loop ─────────────────────────────────────────────────────────── */
@@ -295,6 +334,7 @@ function placeLoop(node, cx, topY, lnodes, edges) {
   const cy = topY + h / 2;
   const ln = { ...node, cx, cy, w, h };
   lnodes.push(ln);
+  const frameStartIdx = lnodes.length - 1;  // index of this loop node in lnodes
 
   const loopBot = cy + h / 2;
   const bodyY   = loopBot + BS.V_GAP;
@@ -302,26 +342,59 @@ function placeLoop(node, cx, topY, lnodes, edges) {
 
   edges.push(ePath([P(cx, loopBot), P(cx, bodyY)]));
 
-  let bodyBot  = bodyY;
-  let visBot   = bodyY;   // max Y of any element (incl. branches)
+  let bodyBot      = bodyY;
+  let visBot       = bodyY;
+  let pendingJoinY  = null;   // join Y from a non-last condition → arrow to next element
+  let lastInnerLoop = null;   // nested loop node → exit arrow to next element
 
   for (let bi = 0; bi < node.body.length; bi++) {
-    const bn = node.body[bi];
+    const bn     = node.body[bi];
+    const isLast = bi === node.body.length - 1;
+
+    // Flush pending condition join
+    if (pendingJoinY !== null) {
+      edges.push(ePath([P(cx, pendingJoinY), P(cx, bodyBot)]));
+      pendingJoinY = null;
+    }
+
+    // Flush exit arrow from previous nested loop
+    if (lastInnerLoop !== null) {
+      const rx = lastInnerLoop.cx + lastInnerLoop.w / 2;
+      edges.push(ePath([P(rx, lastInnerLoop.cy), P(lastInnerLoop.frameRight, lastInnerLoop.cy),
+                        P(lastInnerLoop.frameRight, bodyBot), P(cx, bodyBot)]));
+      lastInnerLoop = null;
+    }
 
     if (bn.type === 'condition') {
-      // layoutCond pushes condNode and all branch nodes
       const beforeLen = lnodes.length;
-      layoutCond(bn, cx, bodyBot, ln, lnodes, edges);
 
-      // Update visBot to include all newly added nodes (including branch sub-trees)
-      for (let j = beforeLen; j < lnodes.length; j++) {
-        const added = lnodes[j];
-        visBot = Math.max(visBot, added.cy + added.h / 2);
+      if (isLast) {
+        layoutCond(bn, cx, bodyBot, ln, lnodes, edges);
+        const { h: ch } = bsz('condition');
+        bodyBot += ch;
+      } else {
+        const joinY = layoutCond(bn, cx, bodyBot, null, lnodes, edges);
+        pendingJoinY = joinY;
+        bodyBot = joinY;
       }
 
-      // Advance bodyBot past this condition block (main axis only)
-      const { h: ch } = bsz('condition');
-      bodyBot += ch;   // topY → condCY was bodyBot+ch/2, condBot = bodyBot+ch
+      for (let j = beforeLen; j < lnodes.length; j++) {
+        visBot = Math.max(visBot, lnodes[j].cy + lnodes[j].h / 2);
+      }
+
+    } else if (bn.type === 'loop') {
+      // Nested loop — recurse into placeLoop
+      const innerVisBot = placeLoop(bn, cx, bodyBot, lnodes, edges);
+      visBot   = Math.max(visBot, innerVisBot);
+      bodyBot  = innerVisBot;
+
+      if (isLast) {
+        // Outer back arrow starts below the full visual extent of the nested loop
+        edges.push(backArrow(cx, innerVisBot, ln));
+      } else {
+        // Track for exit arrow to next body element
+        lastInnerLoop = lnodes.find(n => n.id === bn.id);
+      }
 
     } else {
       const bln = mkNode(bn, cx, bodyBot);
@@ -329,15 +402,33 @@ function placeLoop(node, cx, topY, lnodes, edges) {
       bodyBot = bln.cy + bln.h / 2;
       visBot  = Math.max(visBot, bodyBot);
 
-      // Back arrow only for the last body element
-      // (if a condition follows, its branch paths handle all returns to the loop)
-      if (bi === node.body.length - 1) {
-        edges.push(ePath(backPath(cx, bodyBot, loopLX, cy)));
+      if (isLast) {
+        edges.push(backArrow(cx, bodyBot, ln));
       }
     }
 
-    if (bi < node.body.length - 1) { bodyBot += BS.V_GAP; visBot = Math.max(visBot, bodyBot); }
+    if (!isLast) { bodyBot += BS.V_GAP; visBot = Math.max(visBot, bodyBot); }
   }
+
+  // ── Frame bounds ───────────────────────────────────────────────────
+  // Expand from the loop hexagon outward, treating nested loop frames
+  // as wider anchors so outer frames always enclose inner ones.
+  let fL = cx - w / 2, fR = cx + w / 2;
+  for (let j = frameStartIdx; j < lnodes.length; j++) {
+    const nd = lnodes[j];
+    if (nd.type === 'loop' && nd.frameLeft != null) {
+      fL = Math.min(fL, nd.frameLeft  - BS.FRAME_NEST);
+      fR = Math.max(fR, nd.frameRight + BS.FRAME_NEST);
+    } else {
+      fL = Math.min(fL, nd.cx - nd.w / 2);
+      fR = Math.max(fR, nd.cx + nd.w / 2);
+    }
+  }
+  ln.frameLeft  = fL - BS.FRAME_PAD_X;
+  ln.frameRight = fR + BS.FRAME_PAD_X;
+  ln.frameTop   = topY   - BS.FRAME_PAD_Y;
+  ln.frameBot   = visBot + BS.FRAME_PAD_Y;
+  // ───────────────────────────────────────────────────────────────────
 
   return visBot;   // caller (layoutSeq) uses this to position post-loop content
 }
@@ -349,10 +440,31 @@ function ePath(points, label, labelSide, noArrow) {
   return { points, label, labelSide, noArrow: !!noArrow };
 }
 
-/* Back-arrow path from (fromX, fromY) to left point of loop at (loopLX, loopCY) */
-function backPath(fromX, fromY, loopLX, loopCY) {
-  const outerX = Math.min(fromX - BS.ACTION_W/2 - 8, loopLX - BS.BACK_PAD);
-  return [P(fromX, fromY), P(outerX, fromY), P(outerX, loopCY), P(loopLX, loopCY)];
+/* Lazy back-arrow: stores a reference to the loop node.
+   Resolved after all frames are computed via resolveBackArrows(). */
+function backArrow(fromX, fromY, loopNode) {
+  return { isBackArrow: true, fromX, fromY, loopNode };
+}
+
+/* Resolve all lazy back arrows once every loop has its frameLeft set. */
+function resolveBackArrows(edges) {
+  for (const e of edges) {
+    if (!e.isBackArrow) continue;
+    const ln  = e.loopNode;
+    const lx  = ln.cx - ln.w / 2;   // loop hexagon left tip
+    const D   = BS.BACK_DOWN;
+    e.points  = [
+      P(e.fromX, e.fromY),          // start at bottom of element
+      P(e.fromX, e.fromY + D),      // go down a little first
+      P(ln.frameLeft, e.fromY + D), // go left to frame border
+      P(ln.frameLeft, ln.cy),       // go up along frame border
+      P(lx, ln.cy),                 // go right into loop hexagon
+    ];
+    delete e.isBackArrow;
+    delete e.loopNode;
+    delete e.fromX;
+    delete e.fromY;
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -373,10 +485,37 @@ function renderSVG(lnodes, edges) {
 
   let s = `<svg id="bs-svg" xmlns="http://www.w3.org/2000/svg"
     width="${W}" height="${H}" viewBox="${x0} ${y0} ${W} ${H}">
-  <defs><marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-    <polygon points="0 0,8 3,0 6" fill="#333"/>
-  </marker></defs>`;
+  <defs>
+    <style>
+      .bs-terminal  {fill:var(--bs-terminal-fill);stroke:var(--bs-terminal-stroke);stroke-width:1.5}
+      .bs-assignment{fill:var(--bs-assign-fill);stroke:var(--bs-assign-stroke);stroke-width:1.5}
+      .bs-action    {fill:var(--bs-action-fill);stroke:var(--bs-action-stroke);stroke-width:1.5}
+      .bs-condition {fill:var(--bs-cond-fill);stroke:var(--bs-cond-stroke);stroke-width:1.5}
+      .bs-loop      {fill:var(--bs-loop-fill);stroke:var(--bs-loop-stroke);stroke-width:1.5}
+      .bs-terminal-txt  {fill:var(--bs-terminal-text)}
+      .bs-assignment-txt{fill:var(--bs-assign-text)}
+      .bs-action-txt    {fill:var(--bs-action-text)}
+      .bs-condition-txt {fill:var(--bs-cond-text)}
+      .bs-loop-txt      {fill:var(--bs-loop-text)}
+      .bs-edge      {fill:none;stroke:var(--bs-edge);stroke-width:1.5}
+      .bs-arrowhead {fill:var(--bs-edge)}
+      .bs-label-yes {fill:var(--bs-yes);font-size:12px;font-weight:600;font-family:Inter,sans-serif}
+      .bs-label-no  {fill:var(--bs-no);font-size:12px;font-weight:600;font-family:Inter,sans-serif}
+      .bs-loop-frame{fill:none;stroke:var(--bs-loop-stroke);stroke-width:1.5;opacity:0.4}
+    </style>
+    <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon class="bs-arrowhead" points="0 0,8 3,0 6"/>
+    </marker>
+  </defs>`;
 
+  // Loop frames — rendered behind edges and blocks
+  lnodes.forEach(n => {
+    if (n.type === 'loop' && n.frameLeft != null) {
+      const fw = f(n.frameRight - n.frameLeft);
+      const fh = f(n.frameBot   - n.frameTop);
+      s += `<rect class="bs-loop-frame" x="${f(n.frameLeft)}" y="${f(n.frameTop)}" width="${fw}" height="${fh}" rx="12"/>`;
+    }
+  });
   edges.forEach(e  => { s += drawEdge(e); });
   lnodes.forEach(n => { s += drawBlock(n); });
   return s + '</svg>';
@@ -386,11 +525,11 @@ function drawEdge(e) {
   if (!e.points || e.points.length < 2) return '';
   const d = e.points.map((p,i) => (i?'L':'M')+` ${f(p.x)} ${f(p.y)}`).join(' ');
   const mk = e.noArrow ? '' : ' marker-end="url(#ar)"';
-  let r = `<path d="${d}" fill="none" stroke="#333" stroke-width="1.5"${mk}/>`;
+  let r = `<path class="bs-edge" d="${d}"${mk}/>`;
   if (e.label) {
-    const lp = labelPos(e.points, e.labelSide);
-    r += `<text x="${f(lp.x)}" y="${f(lp.y)}" font-size="12"
-      font-family="Inter,sans-serif" fill="#333"
+    const lp  = labelPos(e.points, e.labelSide);
+    const cls = e.label === 'Да' ? 'bs-label-yes' : e.label === 'Нет' ? 'bs-label-no' : 'bs-label';
+    r += `<text class="${cls}" x="${f(lp.x)}" y="${f(lp.y)}"
       text-anchor="${lp.anc}" dominant-baseline="middle">${e.label}</text>`;
   }
   return r;
@@ -409,35 +548,113 @@ function drawBlock(n) {
     case 'assignment': return drawPara(n);
     case 'condition':  return drawDiam(n);
     case 'loop':       return drawHex(n);
+    case 'terminal':   return drawOval(n);
     default:           return drawRect(n);
   }
 }
 
-const SF = 'fill="#fff" stroke="#333" stroke-width="1.5"';
+/* ── Block shapes — colours via CSS classes / SVG <style> ─────────── */
+const TYPE_CLS = {
+  terminal: 'bs-terminal', assignment: 'bs-assignment',
+  action: 'bs-action', condition: 'bs-condition', loop: 'bs-loop',
+};
+const TXT_CLS = {
+  terminal: 'bs-terminal-txt', assignment: 'bs-assignment-txt',
+  action: 'bs-action-txt', condition: 'bs-condition-txt', loop: 'bs-loop-txt',
+};
 
+function drawOval(n) {
+  const {cx,cy,w,h}=n;
+  return `<ellipse class="${TYPE_CLS[n.type]||'bs-action'}" cx="${f(cx)}" cy="${f(cy)}" rx="${f(w/2)}" ry="${f(h/2)}"/>${drawTxt(n)}`;
+}
 function drawPara(n) {
   const {cx,cy,w,h}=n, sk=BS.ASSIGN_SKEW;
   const pts=`${f(cx-w/2+sk)},${f(cy-h/2)} ${f(cx+w/2+sk)},${f(cy-h/2)} ${f(cx+w/2-sk)},${f(cy+h/2)} ${f(cx-w/2-sk)},${f(cy+h/2)}`;
-  return `<polygon points="${pts}" ${SF}/>${drawTxt(n)}`;
+  return `<polygon class="${TYPE_CLS[n.type]||'bs-action'}" points="${pts}"/>${drawTxt(n)}`;
 }
 function drawRect(n) {
   const {cx,cy,w,h}=n;
-  return `<rect x="${f(cx-w/2)}" y="${f(cy-h/2)}" width="${w}" height="${h}" rx="${BS.ACTION_RX}" ry="${BS.ACTION_RX}" ${SF}/>${drawTxt(n)}`;
+  return `<rect class="${TYPE_CLS[n.type]||'bs-action'}" x="${f(cx-w/2)}" y="${f(cy-h/2)}" width="${w}" height="${h}" rx="${BS.ACTION_RX}" ry="${BS.ACTION_RX}"/>${drawTxt(n)}`;
 }
 function drawDiam(n) {
   const {cx,cy,w,h}=n;
   const pts=`${f(cx)},${f(cy-h/2)} ${f(cx+w/2)},${f(cy)} ${f(cx)},${f(cy+h/2)} ${f(cx-w/2)},${f(cy)}`;
-  return `<polygon points="${pts}" ${SF}/>${drawTxt(n)}`;
+  return `<polygon class="${TYPE_CLS[n.type]||'bs-action'}" points="${pts}"/>${drawTxt(n)}`;
 }
 function drawHex(n) {
   const {cx,cy,w,h}=n, fl=BS.LOOP_FLAT/2;
   const pts=`${f(cx-fl)},${f(cy-h/2)} ${f(cx+fl)},${f(cy-h/2)} ${f(cx+w/2)},${f(cy)} ${f(cx+fl)},${f(cy+h/2)} ${f(cx-fl)},${f(cy+h/2)} ${f(cx-w/2)},${f(cy)}`;
-  return `<polygon points="${pts}" ${SF}/>${drawTxt(n)}`;
+  return `<polygon class="${TYPE_CLS[n.type]||'bs-action'}" points="${pts}"/>${drawTxt(n)}`;
 }
+/* ── Typography helpers ───────────────────────────────────────────── */
+
+// Max chars per line and max lines per block type
+const TYPE_WRAP = {
+  terminal:   { maxChars: 12, maxLines: 1 },
+  assignment: { maxChars: 20, maxLines: 2 },
+  action:     { maxChars: 18, maxLines: 2 },
+  condition:  { maxChars: 15, maxLines: 2 },
+  loop:       { maxChars: 22, maxLines: 2 },
+};
+
+// Greedy word-wrap: returns array of lines
+function wrapLabel(label, type) {
+  const { maxChars, maxLines } = TYPE_WRAP[type] || { maxChars: 18, maxLines: 2 };
+  if (label.length <= maxChars) return [label];
+
+  const words = label.split(/\s+/);
+  if (words.length <= 1) return [label];   // single word, can't wrap
+
+  const lines = [];
+  let cur = words[0];
+
+  for (let i = 1; i < words.length; i++) {
+    if (cur.length + 1 + words[i].length <= maxChars) {
+      cur += ' ' + words[i];
+    } else {
+      lines.push(cur);
+      if (lines.length >= maxLines - 1) {
+        cur = words.slice(i).join(' ');   // last line gets all remaining words
+        break;
+      }
+      cur = words[i];
+    }
+  }
+  lines.push(cur);
+  return lines;
+}
+
+// Scale font size: larger for short labels, smaller for long / multi-line
+function bsFontSize(label, numLines) {
+  if (numLines > 1) return 10;
+  const len = label.length;
+  if (len <= 6)  return 14;
+  if (len <= 12) return 13;
+  if (len <= 18) return 12;
+  if (len <= 24) return 11;
+  return 10;
+}
+
 function drawTxt(n) {
-  const fs = n.label.length > 18 ? 11 : 13;
-  return `<text x="${f(n.cx)}" y="${f(n.cy)}" font-size="${fs}" font-family="Inter,sans-serif"
-    fill="#222" text-anchor="middle" dominant-baseline="middle">${xe(n.label)}</text>`;
+  const lines  = wrapLabel(n.label, n.type);
+  const fs     = bsFontSize(n.label, lines.length);
+  const lineH  = Math.round(fs * 1.3);
+  const cls    = TXT_CLS[n.type] || 'bs-action-txt';
+  const common = `font-size="${fs}" font-family="Inter,sans-serif" font-weight="500" text-anchor="middle" dominant-baseline="middle"`;
+
+  if (lines.length === 1) {
+    return `<text class="${cls}" x="${f(n.cx)}" y="${f(n.cy)}" ${common}>${xe(lines[0])}</text>`;
+  }
+
+  // Multi-line: first tspan anchored so the whole block is vertically centred at n.cy
+  const y0 = f(n.cy - (lines.length - 1) * lineH / 2);
+  const tspans = lines.map((l, i) =>
+    i === 0
+      ? `<tspan x="${f(n.cx)}" y="${y0}">${xe(l)}</tspan>`
+      : `<tspan x="${f(n.cx)}" dy="${lineH}">${xe(l)}</tspan>`
+  ).join('');
+
+  return `<text class="${cls}" ${common}>${tspans}</text>`;
 }
 
 function f(v)  { return Math.round(v*10)/10; }
@@ -471,6 +688,7 @@ function startBlockScheme(code) {
   try {
     const tree = parseCode(code);
     const { lnodes, edges } = layoutTree(tree);
+    resolveBackArrows(edges);   // must run before addColArrows
     addColArrows(lnodes, edges);
     document.getElementById('bs-canvas').innerHTML = renderSVG(lnodes, edges);
   } catch (err) {

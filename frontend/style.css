@@ -21,6 +21,16 @@
   --radius-sm:   10px;
   --font:        'Inter', sans-serif;
   --mono:        'JetBrains Mono', 'Fira Mono', monospace;
+
+  /* Block Scheme — light palette */
+  --bs-terminal-fill:   #f1f5f9;  --bs-terminal-stroke: #64748b;  --bs-terminal-text:   #1e293b;
+  --bs-assign-fill:     #dbeafe;  --bs-assign-stroke:   #3b82f6;  --bs-assign-text:     #1e3a8a;
+  --bs-action-fill:     #dcfce7;  --bs-action-stroke:   #16a34a;  --bs-action-text:     #14532d;
+  --bs-cond-fill:       #fef9c3;  --bs-cond-stroke:     #ca8a04;  --bs-cond-text:       #78350f;
+  --bs-loop-fill:       #ede9fe;  --bs-loop-stroke:     #7c3aed;  --bs-loop-text:       #3b0764;
+  --bs-edge:            #4b5563;
+  --bs-yes:             #16a34a;
+  --bs-no:              #dc2626;
 }
 
 /* ===== Reset ===== */
@@ -662,6 +672,16 @@ body {
   --amber-bg:     #1F1700;
   --shadow:       0 2px 12px rgba(0,0,0,0.45);
   --shadow-md:    0 4px 24px rgba(0,0,0,0.55);
+
+  /* Block Scheme — dark palette */
+  --bs-terminal-fill:   #334155;  --bs-terminal-stroke: #94a3b8;  --bs-terminal-text:   #e2e8f0;
+  --bs-assign-fill:     #1e3a5f;  --bs-assign-stroke:   #60a5fa;  --bs-assign-text:     #bfdbfe;
+  --bs-action-fill:     #14532d;  --bs-action-stroke:   #4ade80;  --bs-action-text:     #bbf7d0;
+  --bs-cond-fill:       #422006;  --bs-cond-stroke:     #f59e0b;  --bs-cond-text:       #fde68a;
+  --bs-loop-fill:       #2e1065;  --bs-loop-stroke:     #a78bfa;  --bs-loop-text:       #ddd6fe;
+  --bs-edge:            #8b949e;
+  --bs-yes:             #4ade80;
+  --bs-no:              #f87171;
 }
 
 /* Плавный переход при смене темы */
