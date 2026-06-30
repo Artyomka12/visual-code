@@ -31,6 +31,7 @@
   --bs-edge:            #4b5563;
   --bs-yes:             #16a34a;
   --bs-no:              #dc2626;
+  --bs-active:          #ea580c;
 }
 
 /* ===== Reset ===== */
@@ -91,6 +92,11 @@ body {
   max-width: 1200px;
   margin: 0 auto;
   padding: 32px 24px 64px;
+}
+/* Block Scheme needs more room for the diagram itself — only this view
+   gets a wider container; Classic View's 1200px layout is untouched. */
+.main:has(#bs-view.active) {
+  max-width: 1400px;
 }
 
 /* ===== View toggle ===== */
@@ -682,6 +688,7 @@ body {
   --bs-edge:            #8b949e;
   --bs-yes:             #4ade80;
   --bs-no:              #f87171;
+  --bs-active:          #fb923c;
 }
 
 /* Плавный переход при смене темы */
@@ -801,6 +808,46 @@ body, .card, .scope-block, .card-header, .editor-footer,
   gap: 20px;
   align-items: flex-start;
 }
+.bs-code-panel {
+  width: 320px;
+  flex-shrink: 0;
+}
+.bs-code-panel .card-header { position: sticky; top: 0; z-index: 1; }
+#bs-code-display {
+  padding: 12px 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.8;
+  min-height: 200px;
+  background: #F8FAFF;
+}
+.bs-code-line {
+  display: flex;
+  align-items: stretch;
+  padding: 0 16px;
+  transition: background 0.2s ease;
+}
+.bs-code-line.active {
+  background: #DBEAFE;
+  border-left: 3px solid var(--primary);
+  padding-left: 13px;
+}
+.bs-code-line .line-num {
+  min-width: 28px;
+  color: var(--text-light);
+  user-select: none;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  padding-right: 10px;
+  flex-shrink: 0;
+}
+.bs-code-line.active .line-num { color: var(--primary); }
+.bs-code-line .line-content {
+  white-space: pre;
+  color: var(--text-dark);
+  padding: 1px 0;
+}
 #bs-canvas {
   flex: 1;
   background: #fff;
@@ -860,6 +907,39 @@ body, .card, .scope-block, .card-header, .editor-footer,
   color: #fff;
   border-color: var(--primary);
 }
+.bs-ctrl-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.bs-ctrl-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dark);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bs-ctrl-btn:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
+.bs-ctrl-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.bs-ctrl-play {
+  width: 38px;
+  height: 38px;
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+  font-size: 13px;
+}
+.bs-ctrl-play:hover { background: var(--primary-dark); border-color: var(--primary-dark); color: #fff; }
 .bs-vars-section { min-height: 100px; }
 .bs-console-section { min-height: 120px; }
 .bs-panel-body {
@@ -870,9 +950,61 @@ body, .card, .scope-block, .card-header, .editor-footer,
   flex-direction: column;
   gap: 4px;
 }
+.bs-vars-section .bs-panel-body {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .bs-panel-empty {
   color: var(--text-light);
   font-size: 12px;
+}
+
+/* Variable cards (step 3.4 — token landing targets) */
+.bs-var-card {
+  background: var(--primary-light);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  min-width: 60px;
+  text-align: center;
+  transition: all 0.25s ease;
+}
+.bs-var-card.changed {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(79,126,247,0.18);
+  animation: pulse-var 0.5s ease;
+}
+.bs-var-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-mid);
+  margin-bottom: 2px;
+}
+.bs-var-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  word-break: break-all;
+}
+
+/* Console lines (step 3.4 — token landing targets) */
+.bs-console-line {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--green);
+}
+.bs-console-line.new {
+  animation: slide-in 0.3s ease;
+}
+
+/* Active block highlight (driven by current trace step — step 3.3) */
+.bs-block-active > :first-child {
+  stroke: var(--bs-active) !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 6px var(--bs-active));
 }
 
 /* Dark mode overrides */
@@ -880,6 +1012,8 @@ body, .card, .scope-block, .card-header, .editor-footer,
 .dark .bs-mode-toggle   { background: #0F172A; }
 .dark .bs-mode-btn.active { background: #1E2D45; }
 .dark #bs-canvas { background: #0F172A; border-color: #1E2D45; }
+.dark #bs-code-display     { background: #0D1117; }
+.dark .bs-code-line.active { background: #1C2D42; }
 
 /* ===== Responsive ===== */
 @media (max-width: 900px) {

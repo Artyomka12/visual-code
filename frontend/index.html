@@ -190,17 +190,35 @@
       <div class="bs-header">
         <button id="bs-back-btn" class="btn btn-secondary">← Вернуться к редактору кода</button>
       </div>
+      <div id="bs-trace-warn" class="warn-banner hidden">
+        <span class="error-icon">⚠</span>
+        <span id="bs-trace-warn-text"></span>
+      </div>
       <div class="bs-body">
+        <div class="card bs-code-panel">
+          <div class="card-header">
+            <span class="card-title">Код</span>
+            <div class="lang-badge">Python</div>
+          </div>
+          <div id="bs-code-display"></div>
+        </div>
         <div id="bs-canvas">
           <svg id="bs-svg" xmlns="http://www.w3.org/2000/svg"></svg>
         </div>
         <div class="bs-sidebar">
           <div class="bs-sidebar-section">
-            <div class="bs-sidebar-title">Скорость</div>
+            <div class="bs-sidebar-title">Управление</div>
             <div class="bs-speed-btns">
               <button class="bs-speed-btn" data-speed="0.5">0.5</button>
               <button class="bs-speed-btn bs-speed-active" data-speed="1">1</button>
               <button class="bs-speed-btn" data-speed="2">2</button>
+            </div>
+            <div class="bs-ctrl-buttons">
+              <button id="bs-ctrl-first" class="bs-ctrl-btn" title="В начало">⏮</button>
+              <button id="bs-ctrl-prev"  class="bs-ctrl-btn" title="Назад (←)">◀</button>
+              <button id="bs-ctrl-play"  class="bs-ctrl-btn bs-ctrl-play" title="Играть / Пауза">▶</button>
+              <button id="bs-ctrl-next"  class="bs-ctrl-btn" title="Вперёд (→)">▶▶</button>
+              <button id="bs-ctrl-last"  class="bs-ctrl-btn" title="В конец">⏭</button>
             </div>
           </div>
           <div class="bs-sidebar-section bs-vars-section">

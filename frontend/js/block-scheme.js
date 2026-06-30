@@ -59,23 +59,23 @@ function parseStmt(l) {
     const rhs = m[2].trim();
     const lit = /^-?\d+(\.\d+)?$/.test(rhs) || /^["'].*["']$/.test(rhs)
               || ['True','False','None'].includes(rhs);
-    return { id: uid(), type: lit ? 'assignment' : 'action', label: s };
+    return { id: uid(), type: lit ? 'assignment' : 'action', label: s, line: l.i + 1 };
   }
-  return { id: uid(), type: 'action', label: s };
+  return { id: uid(), type: 'action', label: s, line: l.i + 1 };
 }
 
 function parseLoop(lines, i, indent) {
   const m = lines[i].s.match(/^for\s+(\w+)\s+in\s+(range\([^)]+\))\s*:/);
   const label = m ? `${m[1]} in ${m[2]}` : lines[i].s.replace(/^for\s+/,'').replace(/:$/,'');
   const { nodes: body, next } = parseBlock(lines, i + 1, indent + 4);
-  return { node: { id: uid(), type: 'loop', label, body }, next };
+  return { node: { id: uid(), type: 'loop', label, body, line: lines[i].i + 1 }, next };
 }
 
 function parseWhile(lines, i, indent) {
   const m = lines[i].s.match(/^while\s+(.+?)\s*:$/);
   const label = m ? m[1].trim() : lines[i].s.replace(/^while\s+/, '').replace(/:$/, '');
   const { nodes: body, next } = parseBlock(lines, i + 1, indent + 4);
-  return { node: { id: uid(), type: 'loop', label, body }, next };
+  return { node: { id: uid(), type: 'loop', label, body, line: lines[i].i + 1 }, next };
 }
 
 function parseCond(lines, i, indent) {
@@ -94,7 +94,7 @@ function parseCond(lines, i, indent) {
       no = [r.node]; next = r.next; hasElse = true;
     }
   }
-  return { node: { id: uid(), type: 'condition', label, yes, no, hasElse }, next };
+  return { node: { id: uid(), type: 'condition', label, yes, no, hasElse, line: lines[i].i + 1 }, next };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -430,8 +430,10 @@ function placeLoop(node, cx, topY, lnodes, edges) {
       bodyBot  = innerVisBot;
 
       if (isLast) {
-        // Outer back arrow starts below the full visual extent of the nested loop
-        edges.push(backArrow(cx, innerVisBot, ln));
+        // Outer back arrow must originate from the inner loop's own hexagon
+        // (its exit point), not from the last action inside its body.
+        const innerLoopNode = lnodes.find(n => n.id === bn.id);
+        edges.push(nestedLoopBackArrow(innerLoopNode, ln));
       } else {
         // Track for exit arrow to next body element
         lastInnerLoop = lnodes.find(n => n.id === bn.id);
@@ -487,24 +489,53 @@ function backArrow(fromX, fromY, loopNode) {
   return { isBackArrow: true, fromX, fromY, loopNode };
 }
 
-/* Resolve all lazy back arrows once every loop has its frameLeft set. */
+/* Lazy "nested loop exit" back-arrow: when a loop is the LAST element of its
+   parent's body, the parent's back-arrow must originate from the inner
+   loop's own hexagon (its exit point), not from the last action inside its
+   body. Routes right around the inner loop first (clearing both its shape
+   and its own back-arrow sweep) before joining the parent's frame border. */
+function nestedLoopBackArrow(innerLoopNode, outerLoopNode) {
+  return { isNestedLoopBackArrow: true, innerLoopNode, outerLoopNode };
+}
+
+/* Resolve all lazy back arrows once every loop has its frame set. */
 function resolveBackArrows(edges) {
   for (const e of edges) {
-    if (!e.isBackArrow) continue;
-    const ln  = e.loopNode;
-    const lx  = ln.cx - ln.w / 2;   // loop hexagon left tip
-    const D   = BS.BACK_DOWN;
-    e.points  = [
-      P(e.fromX, e.fromY),          // start at bottom of element
-      P(e.fromX, e.fromY + D),      // go down a little first
-      P(ln.frameLeft, e.fromY + D), // go left to frame border
-      P(ln.frameLeft, ln.cy),       // go up along frame border
-      P(lx, ln.cy),                 // go right into loop hexagon
-    ];
-    delete e.isBackArrow;
-    delete e.loopNode;
-    delete e.fromX;
-    delete e.fromY;
+    if (e.isBackArrow) {
+      const ln  = e.loopNode;
+      const lx  = ln.cx - ln.w / 2;   // loop hexagon left tip
+      const D   = BS.BACK_DOWN;
+      e.points  = [
+        P(e.fromX, e.fromY),          // start at bottom of element
+        P(e.fromX, e.fromY + D),      // go down a little first
+        P(ln.frameLeft, e.fromY + D), // go left to frame border
+        P(ln.frameLeft, ln.cy),       // go up along frame border
+        P(lx, ln.cy),                 // go right into loop hexagon
+      ];
+      delete e.isBackArrow;
+      delete e.loopNode;
+      delete e.fromX;
+      delete e.fromY;
+
+    } else if (e.isNestedLoopBackArrow) {
+      const inner = e.innerLoopNode;
+      const outer = e.outerLoopNode;
+      const D     = BS.BACK_DOWN;
+      const innerRx  = inner.cx + inner.w / 2;   // inner loop's right tip
+      const outerLx  = outer.cx - outer.w / 2;   // outer loop's left tip
+      const clearY   = inner.frameBot + D;       // below inner loop's own back-arrow sweep
+      e.points = [
+        P(innerRx, inner.cy),                 // start at inner loop's exit point
+        P(inner.frameRight, inner.cy),        // clear the hexagon shape
+        P(inner.frameRight, clearY),          // go down, past inner's own back-arrow
+        P(outer.frameLeft, clearY),           // go left to outer's frame border
+        P(outer.frameLeft, outer.cy),         // go up along outer's frame border
+        P(outerLx, outer.cy),                 // go right into outer loop hexagon
+      ];
+      delete e.isNestedLoopBackArrow;
+      delete e.innerLoopNode;
+      delete e.outerLoopNode;
+    }
   }
 }
 
@@ -558,7 +589,11 @@ function renderSVG(lnodes, edges) {
     }
   });
   edges.forEach(e  => { s += drawEdge(e); });
-  lnodes.forEach(n => { s += drawBlock(n); });
+  lnodes.forEach(n => {
+    s += n.line != null
+      ? `<g data-line="${n.line}">${drawBlock(n)}</g>`
+      : drawBlock(n);
+  });
   return s + '</svg>';
 }
 
@@ -757,9 +792,335 @@ function startBlockScheme(code) {
     resolveBackArrows(edges);   // must run before addColArrows
     addColArrows(lnodes, edges);
     document.getElementById('bs-canvas').innerHTML = renderSVG(lnodes, edges);
+    bsBuildCodeDisplay(code);
+    bsStopAutoplay();
+    bsStepIndex  = -1;
+    bsPrevVars   = {};
+    bsPrevOutput = [];
+    bsAnimating  = false;
+    bsRenderVars({}, []);
+    bsRenderConsole([]);
+    bsHideTraceStatus();
+    bsUpdateControls();
   } catch (err) {
     document.getElementById('bs-canvas').innerHTML =
       `<div style="color:red;padding:16px">Ошибка построения схемы: ${xe(err.message)}</div>`;
     console.error('[BlockScheme]', err);
+  }
+}
+
+/* ── Trace state (consumed by playback features — steps 3.3+) ───────
+   The static diagram above never depends on this: it's a best-effort
+   background fetch that lets later steps drive highlighting/playback. */
+let bsTrace    = { steps: null, error: null, truncated: false };
+let bsTraceGen = 0;   // guards against a stale (slow) response overwriting a newer one
+
+function getBlockSchemeTrace() { return bsTrace; }
+
+async function loadBlockSchemeTrace(code) {
+  const gen = ++bsTraceGen;
+  bsTrace = { steps: null, error: null, truncated: false };
+  bsHideTraceStatus();
+  try {
+    const result = await traceCode(code);
+    if (gen !== bsTraceGen) return;   // a newer call already superseded this one
+    bsTrace = {
+      steps:     result.steps || [],
+      error:     result.error || null,
+      truncated: !!result.truncated,
+    };
+    if (bsTrace.error) {
+      bsShowTraceStatus(`Трассировка недоступна: ${bsTrace.error.message}`, true);
+    } else if (bsTrace.truncated) {
+      bsShowTraceStatus('Код содержит более 600 шагов — показаны первые 600', false);
+    }
+    if (bsTrace.steps.length) {
+      renderBlockSchemeStep(0);   // also refreshes control button states
+    } else {
+      bsUpdateControls();         // no steps at all — keep buttons disabled
+    }
+  } catch (err) {
+    if (gen !== bsTraceGen) return;
+    // Server unreachable/erroring — static diagram stays usable, just no trace data
+    bsTrace = { steps: null, error: { message: err.message }, truncated: false };
+    bsShowTraceStatus(`Не удалось загрузить трассировку: ${err.message}`, true);
+    bsUpdateControls();
+  }
+}
+
+/* Trace status banner — surfaces runtime errors, validation errors, and
+   600-step truncation that loadBlockSchemeTrace() already detects but
+   previously left unreported in the UI. */
+function bsShowTraceStatus(message, isError) {
+  const el  = document.getElementById('bs-trace-warn');
+  const txt = document.getElementById('bs-trace-warn-text');
+  if (!el || !txt) return;
+  txt.textContent = message;
+  el.className = isError ? 'error-banner' : 'warn-banner';
+}
+
+function bsHideTraceStatus() {
+  const el = document.getElementById('bs-trace-warn');
+  if (el) el.className = 'hidden';
+}
+
+/* ── Code panel + active-step highlighting (step 3.3) ────────────────
+   bsBuildCodeDisplay/bsSetActiveLine mirror editor.js's Classic View
+   helpers but operate on a fully separate panel (#bs-code-display,
+   .bs-code-line) so the two views never share mutable DOM state. */
+let bsStepIndex = -1;
+
+function bsBuildCodeDisplay(code) {
+  const display = document.getElementById('bs-code-display');
+  if (!display) return;
+  display.innerHTML = '';
+  code.split('\n').forEach((line, idx) => {
+    const row = document.createElement('div');
+    row.className = 'bs-code-line';
+    row.dataset.line = idx + 1;
+
+    const numEl = document.createElement('span');
+    numEl.className = 'line-num';
+    numEl.textContent = idx + 1;
+
+    const content = document.createElement('span');
+    content.className = 'line-content';
+    content.innerHTML = highlightPython(line) || '&nbsp;';
+
+    row.appendChild(numEl);
+    row.appendChild(content);
+    display.appendChild(row);
+  });
+}
+
+function bsSetActiveLine(lineNum) {
+  document.querySelectorAll('.bs-code-line').forEach(el => el.classList.remove('active'));
+  const target = document.querySelector(`.bs-code-line[data-line="${lineNum}"]`);
+  if (target) {
+    target.classList.add('active');
+    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function bsSetActiveBlock(lineNum) {
+  const svg = document.getElementById('bs-svg');
+  if (!svg) return;
+  svg.querySelectorAll('.bs-block-active').forEach(el => el.classList.remove('bs-block-active'));
+  const target = svg.querySelector(`[data-line="${lineNum}"]`);
+  if (target) {
+    target.classList.add('bs-block-active');
+    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function renderBlockSchemeStep(index) {
+  const steps = bsTrace.steps;
+  if (!steps || !steps.length) return;
+  bsStepIndex = Math.max(0, Math.min(index, steps.length - 1));
+  const step = steps[bsStepIndex];
+  if (!step) return;
+
+  if (step.line != null) {
+    bsSetActiveLine(step.line);
+    bsSetActiveBlock(step.line);
+  }
+
+  const vars   = step.variables || {};
+  const output = step.output    || [];
+  const changedVars = Object.keys(vars).filter(
+    k => JSON.stringify(vars[k]) !== JSON.stringify(bsPrevVars[k])
+  );
+  bsRenderVars(vars, changedVars);
+  bsRenderConsole(output);
+  bsPrevVars   = { ...vars };
+  bsPrevOutput = [...output];
+  bsUpdateControls();
+}
+
+let bsAnimating = false;   // guards against overlapping token flights from rapid key presses
+
+function bsStepPrev() {
+  if (bsAnimating || bsStepIndex <= 0) return;
+  renderBlockSchemeStep(bsStepIndex - 1);   // snap back, no token animation (mirrors Classic View)
+}
+
+/* Forward step: diff current vs. next step, fly one token per changed
+   variable + one for new console output, then commit the new state.
+   Reuses animator.js's animateBall()/formatValue() — generic, no DOM
+   assumptions tied to Classic View — rather than duplicating GSAP code. */
+function bsStepNext(onDone) {
+  if (bsAnimating) return;   // ignore presses while a token is mid-flight
+  const steps = bsTrace.steps;
+  if (!steps || !steps.length || bsStepIndex >= steps.length - 1) { if (onDone) onDone(); return; }
+
+  const curStep  = steps[bsStepIndex];
+  const nextIdx  = bsStepIndex + 1;
+  const nextStep = steps[nextIdx];
+
+  const curVars  = curStep.variables  || {};
+  const nextVars = nextStep.variables || {};
+  const curOut   = curStep.output     || [];
+  const nextOut  = nextStep.output    || [];
+
+  const changedVars = Object.keys(nextVars).filter(
+    k => JSON.stringify(nextVars[k]) !== JSON.stringify(curVars[k])
+  );
+  const newLines = nextOut.slice(curOut.length);
+
+  const srcEl  = document.querySelector('#bs-svg .bs-block-active');
+  const hasCon = newLines.length > 0 && !!srcEl;
+  const memBalls  = srcEl ? changedVars : [];
+  const ballCount = memBalls.length + (hasCon ? 1 : 0);
+
+  if (ballCount === 0) { renderBlockSchemeStep(nextIdx); if (onDone) onDone(); return; }
+
+  bsAnimating = true;
+  let landed = 0;
+  const onLand = () => {
+    if (++landed < ballCount) return;
+    renderBlockSchemeStep(nextIdx);
+    bsAnimating = false;
+    if (onDone) onDone();
+  };
+
+  const fast = bsSpeed >= 2;   // scale the flight itself, not just the inter-step pause
+  memBalls.forEach(() => animateBall(srcEl, document.getElementById('bs-vars-body'), '#4F7EF7', onLand, fast));
+  if (hasCon) animateBall(srcEl, document.getElementById('bs-console-body'), '#059669', onLand, fast);
+}
+
+/* ── Playback controls (step 3.5) ─────────────────────────────────── */
+const BS_SPEED_PAUSE = { 0.5: 900, 1: 450, 2: 180 };   // ms between landing and the next step
+let bsSpeed     = 1;
+let bsIsPlaying = false;
+let bsPlayTimer = null;
+
+function bsUpdatePlayBtn() {
+  const btn = document.getElementById('bs-ctrl-play');
+  if (btn) btn.textContent = bsIsPlaying ? '⏸' : '▶';
+}
+
+function bsUpdateControls() {
+  const steps   = bsTrace.steps;
+  const len     = steps ? steps.length : 0;
+  const atStart = bsStepIndex <= 0;
+  const atEnd   = !len || bsStepIndex >= len - 1;
+  const first = document.getElementById('bs-ctrl-first');
+  const prev  = document.getElementById('bs-ctrl-prev');
+  const next  = document.getElementById('bs-ctrl-next');
+  const last  = document.getElementById('bs-ctrl-last');
+  if (first) first.disabled = atStart;
+  if (prev)  prev.disabled  = atStart;
+  if (next)  next.disabled  = atEnd;
+  if (last)  last.disabled  = atEnd;
+  bsUpdatePlayBtn();
+}
+
+function bsStopAutoplay() {
+  bsIsPlaying = false;
+  clearTimeout(bsPlayTimer);
+  bsUpdatePlayBtn();
+}
+
+function bsGotoStart() {
+  bsStopAutoplay();
+  if (!bsTrace.steps || !bsTrace.steps.length) return;
+  bsPrevVars   = {};
+  bsPrevOutput = [];
+  renderBlockSchemeStep(0);
+}
+
+function bsGotoEnd() {
+  bsStopAutoplay();
+  if (!bsTrace.steps || !bsTrace.steps.length) return;
+  renderBlockSchemeStep(bsTrace.steps.length - 1);
+}
+
+function bsScheduleNextStep() {
+  if (!bsIsPlaying) return;
+  const steps = bsTrace.steps;
+  if (!steps || bsStepIndex >= steps.length - 1) { bsStopAutoplay(); return; }
+  bsStepNext(() => {
+    if (!bsIsPlaying) return;
+    bsPlayTimer = setTimeout(bsScheduleNextStep, BS_SPEED_PAUSE[bsSpeed] || 450);
+  });
+}
+
+function bsTogglePlay() {
+  if (bsIsPlaying) { bsStopAutoplay(); return; }
+  if (!bsTrace.steps || !bsTrace.steps.length) return;
+  if (bsStepIndex >= bsTrace.steps.length - 1) {   // at the end — restart from the top
+    bsPrevVars   = {};
+    bsPrevOutput = [];
+    renderBlockSchemeStep(0);
+  }
+  bsIsPlaying = true;
+  bsUpdatePlayBtn();
+  bsScheduleNextStep();
+}
+
+function bsSetSpeed(speed) {
+  bsSpeed = speed;
+  document.querySelectorAll('.bs-speed-btn').forEach(b => {
+    b.classList.toggle('bs-speed-active', parseFloat(b.dataset.speed) === speed);
+  });
+}
+
+/* Wire up Block Scheme playback buttons (mirrors animator.js's Classic View wiring,
+   kept in this file so each view owns its own controls). */
+document.getElementById('bs-ctrl-first')?.addEventListener('click', bsGotoStart);
+document.getElementById('bs-ctrl-prev') ?.addEventListener('click', () => { bsStopAutoplay(); bsStepPrev(); });
+document.getElementById('bs-ctrl-play') ?.addEventListener('click', bsTogglePlay);
+document.getElementById('bs-ctrl-next') ?.addEventListener('click', () => { bsStopAutoplay(); bsStepNext(); });
+document.getElementById('bs-ctrl-last') ?.addEventListener('click', bsGotoEnd);
+document.querySelectorAll('.bs-speed-btn').forEach(btn => {
+  btn.addEventListener('click', () => bsSetSpeed(parseFloat(btn.dataset.speed)));
+});
+
+/* ── Variables / console panels (step 3.4 — token landing targets) ── */
+let bsPrevVars   = {};
+let bsPrevOutput = [];
+
+function bsRenderVars(vars, changedKeys) {
+  const container = document.getElementById('bs-vars-body');
+  if (!container) return;
+  const keys = Object.keys(vars);
+  if (keys.length === 0) {
+    container.innerHTML = '<span class="bs-panel-empty">—</span>';
+    return;
+  }
+  container.innerHTML = '';
+  for (const k of keys) {
+    const card = document.createElement('div');
+    card.className = 'bs-var-card' + (changedKeys.includes(k) ? ' changed' : '');
+    card.dataset.varName = k;
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'bs-var-name';
+    nameEl.textContent = k;
+
+    const valEl = document.createElement('div');
+    valEl.className = 'bs-var-value';
+    valEl.textContent = formatValue(vars[k]);
+
+    card.appendChild(nameEl);
+    card.appendChild(valEl);
+    container.appendChild(card);
+  }
+}
+
+function bsRenderConsole(output) {
+  const container = document.getElementById('bs-console-body');
+  if (!container) return;
+  if (output.length === 0) {
+    container.innerHTML = '<span class="bs-panel-empty">—</span>';
+    return;
+  }
+  const existingLines = container.querySelectorAll('.bs-console-line').length;
+  if (existingLines === 0) container.innerHTML = '';
+  for (let i = existingLines; i < output.length; i++) {
+    const line = document.createElement('div');
+    line.className = 'bs-console-line new';
+    line.textContent = output[i];
+    container.appendChild(line);
   }
 }

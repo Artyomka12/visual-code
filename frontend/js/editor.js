@@ -190,12 +190,13 @@ runBtn.addEventListener('click', async () => {
   runBtn.classList.add('btn-loading');
   runBtn.textContent = 'Запуск...';
 
-  // Block Scheme builds a static flowchart — no backend needed
+  // Block Scheme builds a static flowchart — no backend needed for that part
   if (vizMode === 'blockscheme') {
     try {
       inputView.classList.remove('active');
       bsView.classList.add('active');
       startBlockScheme(code);
+      loadBlockSchemeTrace(code);   // background: powers highlighting/playback (3.3+)
     } catch (err) {
       showError('Ошибка построения схемы: ' + err.message);
     } finally {
@@ -256,6 +257,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowRight') stepNext();
   if (e.key === 'ArrowLeft')  stepPrev();
   if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+});
+
+/* ===== Block Scheme keyboard navigation (step cursor + playback — step 3.5) ===== */
+document.addEventListener('keydown', (e) => {
+  if (!bsView.classList.contains('active')) return;
+  if (e.key === 'ArrowRight') { bsStopAutoplay(); bsStepNext(); }
+  if (e.key === 'ArrowLeft')  { bsStopAutoplay(); bsStepPrev(); }
+  if (e.key === ' ') { e.preventDefault(); bsTogglePlay(); }
 });
 
 /* ===== Detect code title ===== */
