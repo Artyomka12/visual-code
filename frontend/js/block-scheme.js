@@ -191,27 +191,42 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true)
   const yesCX     = cx - BS.H_OFF;
   const noCX      = cx + BS.H_OFF;
 
+  /* Connects the end of a Да/Нет branch into a target point. If the
+     branch's last element was itself a loop, route through its hexagon
+     (loopExitConnector) instead of its raw bottom coordinate — keeps
+     "exit always through the loop block" true everywhere a branch can
+     end in a loop: inside a loop or not, last in the loop or not,
+     with/without else. See Rule 9 generalization. */
+  const mergeFrom = (lastLoop, fx, fy, tx, ty) => {
+    if (lastLoop) {
+      edges.push(loopExitConnector(lastLoop, tx, ty));
+    } else {
+      const pts = Math.abs(fx - tx) < 2 ? [P(fx, fy), P(tx, ty)] : [P(fx, fy), P(fx, ty), P(tx, ty)];
+      edges.push({ points: pts, noArrow: true });
+    }
+  };
+
   /* ── INSIDE LOOP, NOT LAST ── */
   if (loopCtx && !isLastInLoop) {
     const D = BS.BACK_DOWN;
 
-    let yesBot = branchTop;
+    let yesBot = branchTop, yesLastLoop = null;
     if (node.yes.length > 0) {
       edges.push(ePath([P(cx - w/2, cy), P(cx - w/2, cy + D), P(yesCX, cy + D), P(yesCX, branchTop)], 'Да', 'left'));
-      yesBot = linSeq(node.yes, yesCX, branchTop, loopCtx, lnodes, edges);
+      ({ bot: yesBot, lastLoop: yesLastLoop } = linSeq(node.yes, yesCX, branchTop, loopCtx, lnodes, edges));
     }
 
     if (node.hasElse && node.no.length > 0) {
       edges.push(ePath([P(cx + w/2, cy), P(cx + w/2, cy + D), P(noCX, cy + D), P(noCX, branchTop)], 'Нет', 'right'));
-      const noBot = linSeq(node.no, noCX, branchTop, loopCtx, lnodes, edges);
+      const { bot: noBot, lastLoop: noLastLoop } = linSeq(node.no, noCX, branchTop, loopCtx, lnodes, edges);
 
       const yesJoin = node.yes.length > 0 ? yesBot : condBot;
       const joinY   = Math.max(yesJoin, noBot) + Math.round(BS.V_GAP / 2);
 
       if (node.yes.length > 0) {
-        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+        mergeFrom(yesLastLoop, yesCX, yesBot, cx, joinY);
       }
-      edges.push({ points: [P(noCX, noBot), P(noCX, joinY), P(cx, joinY)], noArrow: true });
+      mergeFrom(noLastLoop, noCX, noBot, cx, joinY);
       return joinY;
 
     } else {
@@ -219,7 +234,7 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true)
       const joinY = (node.yes.length > 0 ? yesBot : condBot) + Math.round(BS.V_GAP / 2);
 
       if (node.yes.length > 0) {
-        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+        mergeFrom(yesLastLoop, yesCX, yesBot, cx, joinY);
       } else {
         edges.push({ points: [P(cx - w/2, cy), P(cx - w/2, joinY), P(cx, joinY)],
                      label: 'Да', labelSide: 'left', noArrow: true });
@@ -234,23 +249,23 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true)
   if (loopCtx) {
     const D = BS.BACK_DOWN;
 
-    let yesBot = branchTop;
+    let yesBot = branchTop, yesLastLoop = null;
     if (node.yes.length > 0) {
       edges.push(ePath([P(cx - w/2, cy), P(cx - w/2, cy + D), P(yesCX, cy + D), P(yesCX, branchTop)], 'Да', 'left'));
-      yesBot = linSeq(node.yes, yesCX, branchTop, loopCtx, lnodes, edges);
+      ({ bot: yesBot, lastLoop: yesLastLoop } = linSeq(node.yes, yesCX, branchTop, loopCtx, lnodes, edges));
     }
 
     if (node.hasElse && node.no.length > 0) {
       edges.push(ePath([P(cx + w/2, cy), P(cx + w/2, cy + D), P(noCX, cy + D), P(noCX, branchTop)], 'Нет', 'right'));
-      const noBot = linSeq(node.no, noCX, branchTop, loopCtx, lnodes, edges);
+      const { bot: noBot, lastLoop: noLastLoop } = linSeq(node.no, noCX, branchTop, loopCtx, lnodes, edges);
 
       const yesJoin = node.yes.length > 0 ? yesBot : condBot;
       const joinY   = Math.max(yesJoin, noBot) + Math.round(BS.V_GAP / 2);
 
       if (node.yes.length > 0) {
-        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+        mergeFrom(yesLastLoop, yesCX, yesBot, cx, joinY);
       }
-      edges.push({ points: [P(noCX, noBot), P(noCX, joinY), P(cx, joinY)], noArrow: true });
+      mergeFrom(noLastLoop, noCX, noBot, cx, joinY);
       edges.push(backArrow(cx, joinY, loopCtx));
       return joinY;
 
@@ -259,7 +274,7 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true)
       const joinY = (node.yes.length > 0 ? yesBot : condBot) + Math.round(BS.V_GAP / 2);
 
       if (node.yes.length > 0) {
-        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+        mergeFrom(yesLastLoop, yesCX, yesBot, cx, joinY);
       } else {
         edges.push({ points: [P(cx - w/2, cy), P(cx - w/2, joinY), P(cx, joinY)],
                      label: 'Да', labelSide: 'left', noArrow: true });
@@ -273,18 +288,18 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true)
 
   /* ── TOP LEVEL ── */
   // YES branch
-  let yesBot = branchTop;
+  let yesBot = branchTop, yesLastLoop = null;
   if (node.yes.length > 0) {
     edges.push(ePath([P(cx - w/2, cy), P(yesCX, cy), P(yesCX, branchTop)], 'Да', 'left'));
-    yesBot = linSeq(node.yes, yesCX, branchTop, null, lnodes, edges);
+    ({ bot: yesBot, lastLoop: yesLastLoop } = linSeq(node.yes, yesCX, branchTop, null, lnodes, edges));
   }
 
   // NO branch
-  let noBot = branchTop;
+  let noBot = branchTop, noLastLoop = null;
   const bpX = noCX + BS.ACTION_W / 2 + 8;
   if (node.hasElse && node.no.length > 0) {
     edges.push(ePath([P(cx + w/2, cy), P(noCX, cy), P(noCX, branchTop)], 'Нет', 'right'));
-    noBot = linSeq(node.no, noCX, branchTop, null, lnodes, edges);
+    ({ bot: noBot, lastLoop: noLastLoop } = linSeq(node.no, noCX, branchTop, null, lnodes, edges));
   } else {
     edges.push(ePath([P(cx + w/2, cy), P(bpX, cy)], 'Нет', 'right', true));
   }
@@ -292,22 +307,14 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true)
   // Join Y
   const joinY = Math.max(yesBot, noBot) + BS.V_GAP;
 
-  // Merge arrows (no arrowhead)
-  const merge = (fx, fy, tx, ty) => {
-    const pts = Math.abs(fx - tx) < 2
-      ? [P(fx, fy), P(tx, ty)]
-      : [P(fx, fy), P(fx, ty), P(tx, ty)];
-    edges.push({ points: pts, noArrow: true });
-  };
-
   if (node.yes.length > 0) {
-    merge(yesCX, yesBot, cx, joinY);
+    mergeFrom(yesLastLoop, yesCX, yesBot, cx, joinY);
   } else {
-    merge(cx - w/2, cy, cx, joinY);
+    mergeFrom(null, cx - w/2, cy, cx, joinY);
   }
 
   if (node.hasElse && node.no.length > 0) {
-    merge(noCX, noBot, cx, joinY);
+    mergeFrom(noLastLoop, noCX, noBot, cx, joinY);
   } else {
     edges.push({ points: [P(bpX, cy), P(bpX, joinY), P(cx, joinY)], noArrow: true });
   }
@@ -364,7 +371,7 @@ function linSeq(nodes, cx, y, loopCtx, lnodes, edges) {
     }
   }
 
-  return bot;
+  return { bot, lastLoop };
 }
 
 /* ── Loop ─────────────────────────────────────────────────────────── */
@@ -498,6 +505,17 @@ function nestedLoopBackArrow(innerLoopNode, outerLoopNode) {
   return { isNestedLoopBackArrow: true, innerLoopNode, outerLoopNode };
 }
 
+/* Lazy general-purpose "exit via hexagon" connector: whenever a sequence
+   of statements (a condition branch, a loop body, ...) ends in a loop,
+   anything that connects FROM the end of that sequence must originate
+   from the loop's own hexagon — never from the last action inside it.
+   Generalizes nestedLoopBackArrow's routing (right tip → frameRight →
+   clear below its own back-arrow sweep) to an arbitrary destination
+   point, instead of only "back to the parent loop's header". */
+function loopExitConnector(loopNode, toX, toY) {
+  return { isLoopExitConnector: true, loopNode, toX, toY };
+}
+
 /* Resolve all lazy back arrows once every loop has its frame set. */
 function resolveBackArrows(edges) {
   for (const e of edges) {
@@ -535,6 +553,20 @@ function resolveBackArrows(edges) {
       delete e.isNestedLoopBackArrow;
       delete e.innerLoopNode;
       delete e.outerLoopNode;
+
+    } else if (e.isLoopExitConnector) {
+      const ln     = e.loopNode;
+      const rx     = ln.cx + ln.w / 2;        // loop's own exit point
+      const D      = BS.BACK_DOWN;
+      const clearY = ln.frameBot + D;          // below its own back-arrow sweep
+      const tail   = Math.abs(ln.frameRight - e.toX) < 2
+        ? [P(e.toX, clearY), P(e.toX, e.toY)]
+        : [P(ln.frameRight, clearY), P(e.toX, clearY), P(e.toX, e.toY)];
+      e.points = [P(rx, ln.cy), P(ln.frameRight, ln.cy), ...tail];
+      delete e.isLoopExitConnector;
+      delete e.loopNode;
+      delete e.toX;
+      delete e.toY;
     }
   }
 }
@@ -785,6 +817,10 @@ function addColArrows(lnodes, edges) {
    PUBLIC API
    ═══════════════════════════════════════════════════════════════════ */
 
+let bsLnodes = [];   // last built layout — needed by the flow-cursor path finder (step 4.1)
+let bsEdges  = [];
+let bsPathCache = new Map();   // "fromLine->toLine" → resolved path | null (no path found)
+
 function startBlockScheme(code) {
   try {
     const tree = parseCode(code);
@@ -792,6 +828,9 @@ function startBlockScheme(code) {
     resolveBackArrows(edges);   // must run before addColArrows
     addColArrows(lnodes, edges);
     document.getElementById('bs-canvas').innerHTML = renderSVG(lnodes, edges);
+    bsLnodes = lnodes;
+    bsEdges  = edges;
+    bsPathCache = new Map();
     bsBuildCodeDisplay(code);
     bsStopAutoplay();
     bsStepIndex  = -1;
@@ -967,6 +1006,27 @@ function bsStepNext(onDone) {
   );
   const newLines = nextOut.slice(curOut.length);
 
+  // Flow cursor: purely decorative, runs in parallel, never gates the step
+  // commit below — autoplay pacing (3.5) stays exactly as already tuned.
+  // Each changed variable rides its own labeled chip (name=value), staggered
+  // in time so simultaneous changes (e.g. a, b = b, a) read as a short
+  // "train" rather than one illegible overlapping blob. No change at all →
+  // a single plain unlabeled dot.
+  if (curStep.line != null && nextStep.line != null && curStep.line !== nextStep.line) {
+    const path = bsFindEdgePath(curStep.line, nextStep.line);
+    if (path) {
+      if (changedVars.length === 0) {
+        bsAnimateFlowCursor(path, null);
+      } else {
+        const stagger = BS_FLOW_STAGGER_MS / bsSpeed;   // 4.4: relay pacing follows playback speed too
+        changedVars.forEach((varName, i) => {
+          const label = `${varName}=${formatValue(nextVars[varName])}`;
+          setTimeout(() => bsAnimateFlowCursor(path, label), i * stagger);
+        });
+      }
+    }
+  }
+
   const srcEl  = document.querySelector('#bs-svg .bs-block-active');
   const hasCon = newLines.length > 0 && !!srcEl;
   const memBalls  = srcEl ? changedVars : [];
@@ -986,6 +1046,126 @@ function bsStepNext(onDone) {
   const fast = bsSpeed >= 2;   // scale the flight itself, not just the inter-step pause
   memBalls.forEach(() => animateBall(srcEl, document.getElementById('bs-vars-body'), '#4F7EF7', onLand, fast));
   if (hasCon) animateBall(srcEl, document.getElementById('bs-console-body'), '#059669', onLand, fast);
+}
+
+/* ── Flow cursor — travels the real arrow geometry, block to block (4.1) ──
+   Purely geometric: zero changes to the layout engine. Walks the already-
+   built `edges` array from a point near the source block's perimeter,
+   chaining through edges by point-coincidence, until landing near the
+   destination block. Falls back to no animation if no chain is found. */
+const BS_FLOW_MARGIN     = 20;   // px — how close an edge endpoint must be to a block to "belong" to it
+const BS_FLOW_MAX_HOPS   = 8;    // safety cap on chained edge segments
+const BS_FLOW_MIN_MS     = 350;
+const BS_FLOW_MAX_MS     = 1400;
+const BS_FLOW_PX_PER_MS  = 1.1;  // governs duration scaling with path length
+const BS_FLOW_STAGGER_MS = 110;  // delay between simultaneous chips on the same path (4.3)
+
+function bsNearNode(pt, node) {
+  return pt.x >= node.cx - node.w / 2 - BS_FLOW_MARGIN &&
+         pt.x <= node.cx + node.w / 2 + BS_FLOW_MARGIN &&
+         pt.y >= node.cy - node.h / 2 - BS_FLOW_MARGIN &&
+         pt.y <= node.cy + node.h / 2 + BS_FLOW_MARGIN;
+}
+
+function bsFindEdgePath(fromLine, toLine) {
+  const cacheKey = `${fromLine}->${toLine}`;
+  if (bsPathCache.has(cacheKey)) return bsPathCache.get(cacheKey);
+
+  const result = (() => {
+    const fromNode = bsLnodes.find(n => n.line === fromLine);
+    const toNode   = bsLnodes.find(n => n.line === toLine);
+    if (!fromNode || !toNode) return null;
+
+    const startEdges = bsEdges.filter(e => e.points && e.points.length >= 2 && bsNearNode(e.points[0], fromNode));
+
+    for (const startEdge of startEdges) {
+      const chain = [startEdge];
+      let current = startEdge;
+      for (let hop = 0; hop < BS_FLOW_MAX_HOPS; hop++) {
+        const last = current.points[current.points.length - 1];
+        if (bsNearNode(last, toNode)) {
+          return chain.flatMap((e, i) => i === 0 ? e.points : e.points.slice(1));
+        }
+        const next = bsEdges.find(e => e !== current && !chain.includes(e) && e.points &&
+          Math.abs(e.points[0].x - last.x) < 3 && Math.abs(e.points[0].y - last.y) < 3);
+        if (!next) break;
+        chain.push(next);
+        current = next;
+      }
+    }
+    return null;
+  })();
+
+  bsPathCache.set(cacheKey, result);
+  return result;
+}
+
+function bsPathLength(points) {
+  let len = 0;
+  for (let i = 1; i < points.length; i++) {
+    len += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  }
+  return len;
+}
+
+const BS_FLOW_CHIP_MAX_CHARS = 12;   // longer values are truncated with an ellipsis on the chip itself
+
+/* points: polyline in SVG-space to travel. label: optional "name=value" text —
+   when present, rides a small chip instead of a plain dot (step 4.2). */
+function bsAnimateFlowCursor(points, label) {
+  const svg = document.getElementById('bs-svg');
+  if (!svg || points.length < 2) return;
+
+  const NS = 'http://www.w3.org/2000/svg';
+  const baseMs = Math.min(BS_FLOW_MAX_MS, Math.max(BS_FLOW_MIN_MS, bsPathLength(points) / BS_FLOW_PX_PER_MS));
+  const duration = (baseMs / bsSpeed) / 1000;   // 4.4: 2x flies twice as fast, 0.5x half as fast
+  const segDur   = duration / (points.length - 1);
+
+  if (!label) {
+    const dot = document.createElementNS(NS, 'circle');
+    dot.setAttribute('class', 'bs-flow-cursor');
+    dot.setAttribute('r', 6);
+    dot.setAttribute('cx', points[0].x);
+    dot.setAttribute('cy', points[0].y);
+    svg.appendChild(dot);
+
+    const tl = gsap.timeline({ onComplete: () => dot.remove() });
+    for (let i = 1; i < points.length; i++) {
+      tl.to(dot, { attr: { cx: points[i].x, cy: points[i].y }, duration: segDur, ease: 'none' });
+    }
+    return;
+  }
+
+  const text  = label.length > BS_FLOW_CHIP_MAX_CHARS ? label.slice(0, BS_FLOW_CHIP_MAX_CHARS - 1) + '…' : label;
+  const chipW = Math.min(110, Math.max(36, text.length * 7 + 16));
+
+  const g = document.createElementNS(NS, 'g');
+  g.setAttribute('class', 'bs-flow-chip');
+
+  const rect = document.createElementNS(NS, 'rect');
+  rect.setAttribute('class', 'bs-flow-chip-bg');
+  rect.setAttribute('x', -chipW / 2);
+  rect.setAttribute('y', -12);
+  rect.setAttribute('width', chipW);
+  rect.setAttribute('height', 24);
+  rect.setAttribute('rx', 12);
+  g.appendChild(rect);
+
+  const txt = document.createElementNS(NS, 'text');
+  txt.setAttribute('class', 'bs-flow-chip-text');
+  txt.setAttribute('text-anchor', 'middle');
+  txt.setAttribute('dominant-baseline', 'middle');
+  txt.setAttribute('y', 1);
+  txt.textContent = text;
+  g.appendChild(txt);
+
+  svg.appendChild(g);
+  gsap.set(g, { x: points[0].x, y: points[0].y });   // GSAP translates SVG elements via x/y natively
+
+  const tl = gsap.timeline({ onComplete: () => g.remove() });
+  for (let i = 1; i < points.length; i++) {
+    tl.to(g, { x: points[i].x, y: points[i].y, duration: segDur, ease: 'none' });
+  }
 }
 
 /* ── Playback controls (step 3.5) ─────────────────────────────────── */

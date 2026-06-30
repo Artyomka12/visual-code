@@ -1007,6 +1007,30 @@ body, .card, .scope-block, .card-header, .editor-footer,
   filter: drop-shadow(0 0 6px var(--bs-active));
 }
 
+/* Flow cursor — travels block to block along the real arrow geometry (4.1) */
+.bs-flow-cursor {
+  fill: var(--bs-edge);
+  stroke: var(--surface);
+  stroke-width: 1.5px;
+  filter: drop-shadow(0 0 4px var(--bs-edge));
+  pointer-events: none;
+}
+
+/* Flow chip — same trip, but carrying a changed variable's value (4.2) */
+.bs-flow-chip { pointer-events: none; }
+.bs-flow-chip-bg {
+  fill: var(--primary);
+  stroke: var(--surface);
+  stroke-width: 1.5px;
+  filter: drop-shadow(0 0 4px var(--primary));
+}
+.bs-flow-chip-text {
+  fill: #fff;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 /* Dark mode overrides */
 .dark .bs-mode-selector { background: #161F2E; border-color: #1E2D45; }
 .dark .bs-mode-toggle   { background: #0F172A; }
