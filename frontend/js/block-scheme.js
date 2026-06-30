@@ -148,10 +148,11 @@ function layoutSeq(nodes, cx, y0, loopCtx, lnodes, edges) {
       const top = ln.cy - ln.h / 2;
 
       if (lastLoop) {
-        // Loop exit arrow: right tip → frameRight border → down → this node top
+        // Loop exit arrow: right tip → frameRight border → down → above node → down into node top
         const rx = lastLoop.cx + lastLoop.w / 2;
+        const D  = BS.BACK_DOWN;
         edges.push(ePath([P(rx, lastLoop.cy), P(lastLoop.frameRight, lastLoop.cy),
-                          P(lastLoop.frameRight, top), P(ln.cx, top)]));
+                          P(lastLoop.frameRight, top - D), P(ln.cx, top - D), P(ln.cx, top)]));
         lastLoop = null;
       } else {
         addFromJoin(top);   // connect condition join → this node top
@@ -180,7 +181,7 @@ function bsz(type) {
 }
 
 /* ── Condition ────────────────────────────────────────────────────── */
-function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
+function layoutCond(node, cx, topY, loopCtx, lnodes, edges, isLastInLoop = true) {
   const { w, h } = bsz('condition');
   const cy = topY + h / 2;
   lnodes.push({ ...node, cx, cy, w, h });
@@ -190,25 +191,19 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
   const yesCX     = cx - BS.H_OFF;
   const noCX      = cx + BS.H_OFF;
 
-  /* ── INSIDE LOOP ── */
-  if (loopCtx) {
-    const loopLX = loopCtx.cx - loopCtx.w / 2;
-    const loopCY = loopCtx.cy;
+  /* ── INSIDE LOOP, NOT LAST ── */
+  if (loopCtx && !isLastInLoop) {
+    const D = BS.BACK_DOWN;
 
-    // YES → left column
     let yesBot = branchTop;
     if (node.yes.length > 0) {
-      edges.push(ePath([P(cx - w/2, cy), P(yesCX, cy), P(yesCX, branchTop)], 'Да', 'left'));
-      yesBot = linSeq(node.yes, yesCX, branchTop, lnodes, edges);
-    } else {
-      edges.push(ePath([P(cx - w/2, cy), P(cx - w/2, loopCY)], 'Да', 'left'));
-      edges.push(ePath([P(cx - w/2, loopCY), P(loopLX, loopCY)]));
+      edges.push(ePath([P(cx - w/2, cy), P(cx - w/2, cy + D), P(yesCX, cy + D), P(yesCX, branchTop)], 'Да', 'left'));
+      yesBot = linSeq(node.yes, yesCX, branchTop, loopCtx, lnodes, edges);
     }
 
     if (node.hasElse && node.no.length > 0) {
-      // if/else inside loop: both branches merge at join, ONE back arrow to loop
-      edges.push(ePath([P(cx + w/2, cy), P(noCX, cy), P(noCX, branchTop)], 'Нет', 'right'));
-      const noBot = linSeq(node.no, noCX, branchTop, lnodes, edges);
+      edges.push(ePath([P(cx + w/2, cy), P(cx + w/2, cy + D), P(noCX, cy + D), P(noCX, branchTop)], 'Нет', 'right'));
+      const noBot = linSeq(node.no, noCX, branchTop, loopCtx, lnodes, edges);
 
       const yesJoin = node.yes.length > 0 ? yesBot : condBot;
       const joinY   = Math.max(yesJoin, noBot) + Math.round(BS.V_GAP / 2);
@@ -217,20 +212,63 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
         edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
       }
       edges.push({ points: [P(noCX, noBot), P(noCX, joinY), P(cx, joinY)], noArrow: true });
-
-      edges.push(backArrow(cx, joinY, loopCtx));
+      return joinY;
 
     } else {
-      // if without else inside loop: YES back arrow + NO wraps right to loop
+      const stubX = cx + w / 2 + 8;
+      const joinY = (node.yes.length > 0 ? yesBot : condBot) + Math.round(BS.V_GAP / 2);
+
       if (node.yes.length > 0) {
-        edges.push(backArrow(yesCX, yesBot, loopCtx));
+        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+      } else {
+        edges.push({ points: [P(cx - w/2, cy), P(cx - w/2, joinY), P(cx, joinY)],
+                     label: 'Да', labelSide: 'left', noArrow: true });
       }
-      const wrapX = cx + w/2 + BS.WRAP_PAD;
-      edges.push(ePath([P(cx + w/2, cy), P(wrapX, cy), P(wrapX, loopCY), P(loopLX, loopCY)],
-                       'Нет', 'right'));
+      edges.push(ePath([P(cx + w/2, cy), P(cx + w/2, cy + D), P(stubX, cy + D)], 'Нет', 'right', true));
+      edges.push({ points: [P(stubX, cy + D), P(stubX, joinY), P(cx, joinY)], noArrow: true });
+      return joinY;
+    }
+  }
+
+  /* ── INSIDE LOOP, LAST ── */
+  if (loopCtx) {
+    const D = BS.BACK_DOWN;
+
+    let yesBot = branchTop;
+    if (node.yes.length > 0) {
+      edges.push(ePath([P(cx - w/2, cy), P(cx - w/2, cy + D), P(yesCX, cy + D), P(yesCX, branchTop)], 'Да', 'left'));
+      yesBot = linSeq(node.yes, yesCX, branchTop, loopCtx, lnodes, edges);
     }
 
-    return condBot;
+    if (node.hasElse && node.no.length > 0) {
+      edges.push(ePath([P(cx + w/2, cy), P(cx + w/2, cy + D), P(noCX, cy + D), P(noCX, branchTop)], 'Нет', 'right'));
+      const noBot = linSeq(node.no, noCX, branchTop, loopCtx, lnodes, edges);
+
+      const yesJoin = node.yes.length > 0 ? yesBot : condBot;
+      const joinY   = Math.max(yesJoin, noBot) + Math.round(BS.V_GAP / 2);
+
+      if (node.yes.length > 0) {
+        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+      }
+      edges.push({ points: [P(noCX, noBot), P(noCX, joinY), P(cx, joinY)], noArrow: true });
+      edges.push(backArrow(cx, joinY, loopCtx));
+      return joinY;
+
+    } else {
+      const stubX = cx + w / 2 + 8;
+      const joinY = (node.yes.length > 0 ? yesBot : condBot) + Math.round(BS.V_GAP / 2);
+
+      if (node.yes.length > 0) {
+        edges.push({ points: [P(yesCX, yesBot), P(yesCX, joinY), P(cx, joinY)], noArrow: true });
+      } else {
+        edges.push({ points: [P(cx - w/2, cy), P(cx - w/2, joinY), P(cx, joinY)],
+                     label: 'Да', labelSide: 'left', noArrow: true });
+      }
+      edges.push(ePath([P(cx + w/2, cy), P(cx + w/2, cy + D), P(stubX, cy + D)], 'Нет', 'right', true));
+      edges.push({ points: [P(stubX, cy + D), P(stubX, joinY), P(cx, joinY)], noArrow: true });
+      edges.push(backArrow(cx, joinY, loopCtx));
+      return joinY;
+    }
   }
 
   /* ── TOP LEVEL ── */
@@ -238,7 +276,7 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
   let yesBot = branchTop;
   if (node.yes.length > 0) {
     edges.push(ePath([P(cx - w/2, cy), P(yesCX, cy), P(yesCX, branchTop)], 'Да', 'left'));
-    yesBot = linSeq(node.yes, yesCX, branchTop, lnodes, edges);
+    yesBot = linSeq(node.yes, yesCX, branchTop, null, lnodes, edges);
   }
 
   // NO branch
@@ -246,7 +284,7 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
   const bpX = noCX + BS.ACTION_W / 2 + 8;
   if (node.hasElse && node.no.length > 0) {
     edges.push(ePath([P(cx + w/2, cy), P(noCX, cy), P(noCX, branchTop)], 'Нет', 'right'));
-    noBot = linSeq(node.no, noCX, branchTop, lnodes, edges);
+    noBot = linSeq(node.no, noCX, branchTop, null, lnodes, edges);
   } else {
     edges.push(ePath([P(cx + w/2, cy), P(bpX, cy)], 'Нет', 'right', true));
   }
@@ -278,7 +316,7 @@ function layoutCond(node, cx, topY, loopCtx, lnodes, edges) {
 }
 
 /* Lay out a branch sequence — pushes directly to lnodes/edges, returns bottom Y */
-function linSeq(nodes, cx, y, lnodes, edges) {
+function linSeq(nodes, cx, y, loopCtx, lnodes, edges) {
   let bot      = y;
   let lastLoop = null;
   let joinY    = null;
@@ -300,7 +338,7 @@ function linSeq(nodes, cx, y, lnodes, edges) {
 
     } else if (n.type === 'condition') {
       flushJoin(bot);
-      const j = layoutCond(n, cx, bot, null, lnodes, edges);
+      const j = layoutCond(n, cx, bot, loopCtx, lnodes, edges, false);
       joinY    = j;
       lastLoop = null;
       bot = j;
@@ -313,8 +351,9 @@ function linSeq(nodes, cx, y, lnodes, edges) {
 
       if (lastLoop) {
         const rx = lastLoop.cx + lastLoop.w / 2;
+        const D  = BS.BACK_DOWN;
         edges.push(ePath([P(rx, lastLoop.cy), P(lastLoop.frameRight, lastLoop.cy),
-                          P(lastLoop.frameRight, top), P(cx, top)]));
+                          P(lastLoop.frameRight, top - D), P(cx, top - D), P(cx, top)]));
         lastLoop = null;
       } else {
         flushJoin(top);
@@ -360,8 +399,9 @@ function placeLoop(node, cx, topY, lnodes, edges) {
     // Flush exit arrow from previous nested loop
     if (lastInnerLoop !== null) {
       const rx = lastInnerLoop.cx + lastInnerLoop.w / 2;
+      const D  = BS.BACK_DOWN;
       edges.push(ePath([P(rx, lastInnerLoop.cy), P(lastInnerLoop.frameRight, lastInnerLoop.cy),
-                        P(lastInnerLoop.frameRight, bodyBot), P(cx, bodyBot)]));
+                        P(lastInnerLoop.frameRight, bodyBot - D), P(cx, bodyBot - D), P(cx, bodyBot)]));
       lastInnerLoop = null;
     }
 
@@ -369,11 +409,12 @@ function placeLoop(node, cx, topY, lnodes, edges) {
       const beforeLen = lnodes.length;
 
       if (isLast) {
-        layoutCond(bn, cx, bodyBot, ln, lnodes, edges);
+        const condJoinY = layoutCond(bn, cx, bodyBot, ln, lnodes, edges);
         const { h: ch } = bsz('condition');
         bodyBot += ch;
+        visBot = Math.max(visBot, condJoinY);
       } else {
-        const joinY = layoutCond(bn, cx, bodyBot, null, lnodes, edges);
+        const joinY = layoutCond(bn, cx, bodyBot, ln, lnodes, edges, false);
         pendingJoinY = joinY;
         bodyBot = joinY;
       }
@@ -501,7 +542,7 @@ function renderSVG(lnodes, edges) {
       .bs-arrowhead {fill:var(--bs-edge)}
       .bs-label-yes {fill:var(--bs-yes);font-size:12px;font-weight:600;font-family:Inter,sans-serif}
       .bs-label-no  {fill:var(--bs-no);font-size:12px;font-weight:600;font-family:Inter,sans-serif}
-      .bs-loop-frame{fill:none;stroke:var(--bs-loop-stroke);stroke-width:1.5;opacity:0.4}
+      .bs-loop-frame{display:none}
     </style>
     <marker id="ar" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
       <polygon class="bs-arrowhead" points="0 0,8 3,0 6"/>
@@ -536,7 +577,11 @@ function drawEdge(e) {
 }
 
 function labelPos(pts, side) {
-  const p0=pts[0], p1=pts[1];
+  let p0 = pts[0], p1 = pts[1];
+  // If the first segment is a tiny exit-step (< 20px), use the next segment for the label
+  if (pts.length > 2 && Math.abs(p1.x - p0.x) + Math.abs(p1.y - p0.y) < 20) {
+    p0 = pts[1]; p1 = pts[2];
+  }
   const mx=(p0.x+p1.x)/2, my=(p0.y+p1.y)/2;
   if (side==='left')  return { x: mx-12, y: my-8, anc: 'end'    };
   if (side==='right') return { x: mx+12, y: my-8, anc: 'start'  };
@@ -597,12 +642,33 @@ const TYPE_WRAP = {
   loop:       { maxChars: 22, maxLines: 2 },
 };
 
+// Split into "words" for wrapping, but spaces inside ( ) or [ ] never split
+// a word — arr[j + 1] and range(n - i - 1) stay whole.
+function splitWords(label) {
+  const words = [];
+  let cur = '';
+  let depth = 0;
+  for (const ch of label) {
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+
+    if (/\s/.test(ch) && depth === 0) {
+      if (cur) words.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  if (cur) words.push(cur);
+  return words;
+}
+
 // Greedy word-wrap: returns array of lines
 function wrapLabel(label, type) {
   const { maxChars, maxLines } = TYPE_WRAP[type] || { maxChars: 18, maxLines: 2 };
   if (label.length <= maxChars) return [label];
 
-  const words = label.split(/\s+/);
+  const words = splitWords(label);
   if (words.length <= 1) return [label];   // single word, can't wrap
 
   const lines = [];
